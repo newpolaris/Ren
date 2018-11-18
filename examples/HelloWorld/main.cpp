@@ -181,7 +181,7 @@ private:
     VkDescriptorPool descriptorPool;
     std::vector<VkDescriptorSet> descriptorSets;
 
-    std::vector<VkCommandBuffer> commandBuffers;
+    VkCommandBuffer commandBuffer;
 
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkSemaphore> renderFinishedSemaphores;
@@ -219,7 +219,6 @@ private:
         createUniformBuffers();
         createDescriptorPool();
         createDescriptorSets();
-        createCommandBuffers();
         createSyncObjects();
     }
 
@@ -236,11 +235,7 @@ private:
 
         createSwapChain();
         createImageViews();
-        createRenderPass(); // due to swapChainImageFormat change
-        createDescriptorSetLayout();
-        createGraphicsPipeline(); // due to static viewport, scissor
         createFramebuffers();
-        createCommandBuffers(); // due to static command list
     }
 
     void mainLoop()
@@ -253,7 +248,6 @@ private:
         allocateInfo.level =  VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         allocateInfo.commandBufferCount = 1;
 
-        VkCommandBuffer commandBuffer = 0;
         if (vkAllocateCommandBuffers(device, &allocateInfo, &commandBuffer) != VK_SUCCESS)
             throw std::runtime_error("failed to allocate coomand buffer!");
 
@@ -261,13 +255,14 @@ private:
         {
             glfwPollEvents();
 
+            vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, std::numeric_limits<uint64_t>::max());
+
             uint32_t imageIndex = 0;
             VkResult result = vkAcquireNextImageKHR(device, swapChain, ~0ull, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
 
-            if (result == VK_ERROR_OUT_OF_DATE_KHR || framebufferResized) {
-                framebufferResized = false;
+            if (result == VK_ERROR_OUT_OF_DATE_KHR) {
                 recreateSwapChain();
-                return;
+                continue;
             }
             else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
                 throw std::runtime_error("failed_ to acquire swap chain image!");
@@ -283,9 +278,9 @@ private:
                 throw std::runtime_error("failed to create Begin command buffer!");
 
             VkImageMemoryBarrier renderBeginBarrier = imageBarrier(swapChainImages[imageIndex], 0, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 1, &renderBeginBarrier);
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 1, &renderBeginBarrier);
 
-            VkClearValue clearColor = { glm::sin(float(glfwGetTime())), 0.5f, 0.5f, 1.0f };
+            VkClearValue clearColor = { glm::sin(float(glfwGetTime()))*0.5f+0.5f, 0.5f, 0.5f, 1.0f };
 
             VkRenderPassBeginInfo renderPassInfo = {};
             renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -334,7 +329,9 @@ private:
             submitInfo.signalSemaphoreCount = 1;
             submitInfo.pSignalSemaphores = signalSemaphores;
 
-            if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+            vkResetFences(device, 1, &inFlightFences[currentFrame]);
+
+            if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
                 throw std::runtime_error("failed to submit draw command buffer!");
             }
 
@@ -370,16 +367,9 @@ private:
         for (auto framebuffer : swapChainFramebuffers)
             vkDestroyFramebuffer(device, framebuffer, nullptr);
 
-        vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
-
-        vkDestroyPipeline(device, trianglePipeline, nullptr);
-        vkDestroyPipelineLayout(device, triangleLayout, nullptr);
-        vkDestroyRenderPass(device, renderPass, nullptr);
-
-        for (auto imageView : swapChainImageViews) {
+        for (auto imageView : swapChainImageViews)
             vkDestroyImageView(device, imageView, nullptr);
-        }
-
+        
         vkDestroySwapchainKHR(device, swapChain, nullptr);
     }
 
@@ -387,7 +377,9 @@ private:
         cleanupSwapChain();
 
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
-
+        vkDestroyPipeline(device, trianglePipeline, nullptr);
+        vkDestroyPipelineLayout(device, triangleLayout, nullptr);
+        vkDestroyRenderPass(device, renderPass, nullptr);
         vkDestroyDescriptorPool(device, descriptorPool, nullptr);
         for (size_t i = 0; i < swapChainImages.size(); i++) {
             vkDestroyBuffer(device, uniformBuffers[i], nullptr);
@@ -557,8 +549,8 @@ private:
         SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
 
         VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
-        VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
         VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
+        VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
 
         uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
         if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount)
@@ -749,8 +741,8 @@ private:
         if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &triangleLayout) != VK_SUCCESS)
             throw std::runtime_error("failed to create pipeline layout!");
 
-        auto vertShaderCode = readFile("shaders/vert.spv");
-        auto fragShaderCode = readFile("shaders/frag.spv");
+        auto vertShaderCode = readFile("shaders/base.vert.spv");
+        auto fragShaderCode = readFile("shaders/base.frag.spv");
 
         VkShaderModule triangleVS = createShaderModule(vertShaderCode);
         VkShaderModule triangleFS = createShaderModule(fragShaderCode);
@@ -794,24 +786,10 @@ private:
         inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         inputAssembly.primitiveRestartEnable = VK_FALSE;
 
-        VkViewport viewport = {};
-        viewport.x = 0.0f;
-        viewport.y = 0.0f;
-        viewport.width = (float)swapChainExtent.width;
-        viewport.height = (float)swapChainExtent.height;
-        viewport.minDepth = 0.0f;
-        viewport.maxDepth = 1.0f;
-
-        VkRect2D scissor = {};
-        scissor.offset = {0, 0};
-        scissor.extent = swapChainExtent;
-
         VkPipelineViewportStateCreateInfo viewportState = {};
         viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
         viewportState.viewportCount = 1;
-        viewportState.pViewports = &viewport;
         viewportState.scissorCount = 1;
-        viewportState.pScissors = &scissor;
 
         VkPipelineRasterizationStateCreateInfo rasterizer = {};
         rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
@@ -819,7 +797,7 @@ private:
         rasterizer.rasterizerDiscardEnable = VK_FALSE;
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
         rasterizer.lineWidth = 1.0f;
-        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+        rasterizer.cullMode = VK_CULL_MODE_NONE;
         rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
         rasterizer.depthBiasEnable = VK_FALSE;
 
@@ -873,25 +851,28 @@ private:
         return graphicsPipeline;
     }
 
+    VkFramebuffer createFramebuffer(VkDevice device, VkRenderPass renderPass, VkImageView imageView, uint32_t width, uint32_t height)
+    {
+        VkFramebufferCreateInfo framebufferInfo = {};
+        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebufferInfo.renderPass = renderPass;
+        framebufferInfo.attachmentCount = 1;
+        framebufferInfo.pAttachments = &imageView;
+        framebufferInfo.width = width;
+        framebufferInfo.height = height;
+        framebufferInfo.layers = 1;
+
+        VkFramebuffer framebuffer = nullptr;
+        if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &framebuffer) != VK_SUCCESS)
+            throw std::runtime_error("failed to create framebuffer!");
+        return framebuffer;
+    }
+
     void createFramebuffers() {
         swapChainFramebuffers.resize(swapChainImageViews.size());
 
         for (size_t i = 0; i < swapChainImageViews.size(); i++) {
-            VkImageView attachments[] = {
-                swapChainImageViews[i]
-            };
-
-            VkFramebufferCreateInfo framebufferInfo = {};
-            framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-            framebufferInfo.renderPass = renderPass;
-            framebufferInfo.attachmentCount = 1;
-            framebufferInfo.pAttachments = attachments;
-            framebufferInfo.width = swapChainExtent.width;
-            framebufferInfo.height = swapChainExtent.height;
-            framebufferInfo.layers = 1;
-
-            if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS)
-                throw std::runtime_error("failed to create framebuffer!");
+            swapChainFramebuffers[i] = createFramebuffer(device, renderPass, swapChainImageViews[i], swapChainExtent.width, swapChainExtent.height);
         }
     }
 
@@ -1045,10 +1026,6 @@ private:
         }
 
         throw std::runtime_error("failed to find suitable memory type!");
-    }
-
-    void createCommandBuffers()
-    {
     }
 
     void createSyncObjects() {
