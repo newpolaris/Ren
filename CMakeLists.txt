@@ -22,6 +22,7 @@ include_directories(external)
 include_directories(external/glm)
 include_directories(external/gli)
 include_directories(external/glfw/include)
+include_directories(external/meshoptimizer)
 include_directories(base)
 include_directories(${Vulkan_INCLUDE_DIRS})
 
@@ -46,6 +47,8 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE STRING "" FORCE)
 set(GLFW_BUILD_TESTS    OFF CACHE STRING "" FORCE)
 set(GLFW_INSTALL        OFF CACHE STRING "" FORCE)
 add_subdirectory(external/glfw)
+
+add_subdirectory(external/meshoptimizer)
 
 add_subdirectory(base)
 add_subdirectory(examples)

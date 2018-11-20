@@ -25,6 +25,9 @@
 #include <functional>
 #include <sstream>
 
+#include <objparser.h>
+#include <meshoptimizer.h>
+
 const int WIDTH = 800;
 const int HEIGHT = 600;
 const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -38,7 +41,8 @@ const std::vector<const char*> validationLayers = {
 };
 
 const std::vector<const char*> deviceExtensions = {
-    VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
 };
 
 #ifdef NDEBUG
@@ -81,8 +85,9 @@ struct SwapChainSupportDetails {
 
 
 struct Vertex {
-    glm::vec2 pos;
-    glm::vec3 color;
+    float vx, vy, vz;
+    float nx, ny, nz;
+    float tu, tv;
 
     static VkVertexInputBindingDescription getBindingDescription() {
         VkVertexInputBindingDescription bindingDescription = {};
@@ -93,38 +98,101 @@ struct Vertex {
         return bindingDescription;
     }
 
-    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescription() {
-        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions = {};
+    static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescription() {
+        std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions = {};
 
         attributeDescriptions[0].binding = 0;
         attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
-        attributeDescriptions[0].offset = offsetof(Vertex, pos);
+        attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[0].offset = 0;
 
         attributeDescriptions[1].binding = 0;
         attributeDescriptions[1].location = 1;
         attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[1].offset = offsetof(Vertex, color);
+        attributeDescriptions[1].offset = 12;
+
+        attributeDescriptions[2].binding = 0;
+        attributeDescriptions[2].location = 2;
+        attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+        attributeDescriptions[2].offset = 24;
 
         return attributeDescriptions;
     }
+};
+
+struct Mesh
+{
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+};
+
+bool loadMesh(Mesh& result, const std::string& path)
+{
+    ObjFile file;
+    if (objParseFile(file, path.c_str()))
+    {
+        size_t index_count = file.f_size / 3;
+
+        std::vector<Vertex> vertices(index_count);
+
+        for (size_t i = 0; i < index_count; i++)
+        {
+            Vertex& v = vertices[i];
+
+            int vi = file.f[i * 3 + 0];
+            int vti = file.f[i * 3 + 1];
+            int vni = file.f[i * 3 + 2];
+
+            v.vx = file.v[vi * 3 + 0];
+            v.vy = file.v[vi * 3 + 1];
+            v.vz = file.v[vi * 3 + 2];
+
+            v.nx = vni < 0 ? 0.f : file.vn[vi * 3 + 0];
+            v.ny = vni < 0 ? 0.f : file.vn[vi * 3 + 1];
+            v.nz = vni < 0 ? 1.f : file.vn[vi * 3 + 2];
+
+            v.tu = vti < 0 ? 0.f : file.vt[vi * 3 + 0];
+            v.tv = vti < 0 ? 0.f : file.vt[vi * 3 + 2];
+        }
+
+        if (false)
+        {
+            result.vertices = vertices;
+            result.indices.resize(index_count);
+
+            for (size_t i = 0; i < index_count; i++)
+                result.indices[i] = uint32_t(i);
+        }
+        else
+        {
+            std::vector<uint32_t> remap(index_count);
+            size_t vertex_count = meshopt_generateVertexRemap(remap.data(), 0, index_count, vertices.data(), index_count, sizeof(Vertex));
+
+            result.vertices.resize(vertex_count);
+            result.indices.resize(index_count);
+
+            meshopt_remapVertexBuffer(result.vertices.data(), vertices.data(), index_count, sizeof(Vertex), remap.data());
+            meshopt_remapIndexBuffer(result.indices.data(), 0, index_count, remap.data());
+
+            // TODO: optimize the mesh for more efficient GPU rendering
+        }
+        return true;
+    }
+    throw std::runtime_error("failed to load model!");
+}
+
+struct Buffer
+{
+    VkBuffer buffer;
+    VkDeviceMemory memory;
+    void* data;
+    size_t size;
 };
 
 struct UniformBufferObject {
     glm::mat4 model;
     glm::mat4 view;
     glm::mat4 proj;
-};
-
-const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
-};
-
-const std::vector<uint16_t> indices = {
-    0, 2, 1, 0, 3, 2
 };
 
 class HelloTriangleApplication
@@ -171,10 +239,10 @@ private:
 
     VkCommandPool commandPool;
 
-    VkBuffer vertexBuffer;
-    VkDeviceMemory vertexBufferMemory;
-    VkBuffer indexBuffer;
-    VkDeviceMemory indexBufferMemory;
+    VkBuffer vertexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
+    VkBuffer indexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory indexBufferMemory = VK_NULL_HANDLE;
 
     std::vector<VkBuffer> uniformBuffers;
     std::vector<VkDeviceMemory> uniformBuffersMemory;
@@ -251,6 +319,25 @@ private:
         if (vkAllocateCommandBuffers(device, &allocateInfo, &commandBuffer) != VK_SUCCESS)
             throw std::runtime_error("failed to allocate coomand buffer!");
 
+
+        Mesh mesh;
+        bool rcm = loadMesh(mesh, "models/bunny.obj");
+
+        VkPhysicalDeviceMemoryProperties memoryProperties;
+        vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
+
+
+        Buffer vb = {};
+        createBuffer(vb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        Buffer ib = {};
+        createBuffer(ib, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+
+        assert(vb.size >= mesh.vertices.size() * sizeof(Vertex));
+        memcpy(vb.data, mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
+
+        assert(ib.size >= mesh.indices.size() * sizeof(uint32_t));
+        memcpy(ib.data, mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
+
         while (!glfwWindowShouldClose(window)) 
         {
             glfwPollEvents();
@@ -308,7 +395,10 @@ private:
             vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
             vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, trianglePipeline);
-            vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+            VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vb.buffer, &offset);
+            vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(commandBuffer, uint32_t(mesh.indices.size()), 1, 0, 0, 0);
             vkCmdEndRenderPass(commandBuffer);
 
             VkImageMemoryBarrier renderEndBarrier = imageBarrier(swapChainImages[imageIndex], VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
@@ -359,6 +449,9 @@ private:
         vkDeviceWaitIdle(device);
 
         vkDestroyCommandPool(device, commandPool, nullptr);
+        
+        destroyBuffer(vb, device);
+        destroyBuffer(ib, device);
     }
 
 
@@ -425,7 +518,7 @@ private:
         appInfo.pEngineName = "No Engine";
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
         // SHORTCUT: check if 1.1 is available via vkEnumerateInstanceVersion
-        appInfo.apiVersion = VK_API_VERSION_1_0;
+        appInfo.apiVersion = VK_API_VERSION_1_1;
 
         VkInstanceCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -776,10 +869,10 @@ private:
 
         VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
         vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        // vertexInputInfo.vertexBindingDescriptionCount = 1;
-        // vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-        // vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());;
-        // vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+        vertexInputInfo.vertexBindingDescriptionCount = 1;
+        vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());;
+        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
         VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
         inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -928,7 +1021,56 @@ private:
         vkBindBufferMemory(device, buffer, bufferMemory, 0);
     }
 
+    void createBuffer(Buffer& result, VkDevice device, const VkPhysicalDeviceMemoryProperties& memoryPropertices, size_t size, VkBufferUsageFlags usage)
+    {
+        // create buffer object that doesn't have memory back in, just dummy handle
+        VkBufferCreateInfo createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        createInfo.size = size;
+        createInfo.usage = usage;
+        createInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VkBuffer buffer;
+        if (vkCreateBuffer(device, &createInfo, 0, &buffer) != VK_SUCCESS)
+            throw std::runtime_error("failed to createBufer!");
+
+        // how mush memory does use
+        VkMemoryRequirements memoryRequirements;
+        vkGetBufferMemoryRequirements(device, buffer, &memoryRequirements);
+
+        uint32_t memoryTypeIndex = selectMemoryType(memoryPropertices, memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+        VkMemoryAllocateInfo allocInfo = {};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memoryRequirements.size;
+        allocInfo.memoryTypeIndex = memoryTypeIndex;
+
+        VkDeviceMemory memory = 0;
+        if (vkAllocateMemory(device, &allocInfo, nullptr, &memory) != VK_SUCCESS)
+            throw std::runtime_error("failed to allocate memory!");
+
+        // ties memory and object together
+        if (vkBindBufferMemory(device, buffer, memory, 0) != VK_SUCCESS)
+            throw std::runtime_error("failed to bind buffer memory!");
+
+        void* data = nullptr;
+        if (vkMapMemory(device, memory, 0, size, 0, &data) != VK_SUCCESS)
+            throw std::runtime_error("map memory");
+
+        result.buffer = buffer;
+        result.memory = memory;
+        result.data = data;
+        result.size = size;
+    }
+
+    void destroyBuffer(const Buffer& buffer, VkDevice device)
+    {
+        vkFreeMemory(device, buffer.memory, nullptr);
+        vkDestroyBuffer(device, buffer.buffer, nullptr);
+    }
+
     void createVertexBuffer() {
+    #if 0
         VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
         VkBuffer stagingBuffer;
@@ -946,9 +1088,11 @@ private:
 
         vkDestroyBuffer(device, stagingBuffer, nullptr);
         vkFreeMemory(device, stagingBufferMemory, nullptr);
+    #endif
     }
 
     void createIndexBuffer() {
+    #if 0
         VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
 
         VkBuffer stagingBuffer;
@@ -966,6 +1110,7 @@ private:
 
         vkDestroyBuffer(device, stagingBuffer, nullptr);
         vkFreeMemory(device, stagingBufferMemory, nullptr);
+    #endif
     }
 
     void createUniformBuffers()
@@ -1015,7 +1160,20 @@ private:
         vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
     }
 
-    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+    // VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT - near GPU, fastest
+    // VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT - access from CPU write even read
+    // VK_MEMORY_PROPERTY_HOST_COHERENT_BIT - whenevenr we do write from a CPU memory and then submit a comment to the gpu in a command buffer, you don't need to do extra operations to make sure this memory is like visible
+    // VK_MEMORY_PROPERTY_HOST_CACHED_BIT - fill the buffet and you want to read that 
+    uint32_t selectMemoryType(const VkPhysicalDeviceMemoryProperties& memoryProperties, uint32_t memoryTypeBits, VkMemoryPropertyFlags flags)
+    {
+        for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++)
+            if ((memoryTypeBits & (1 << i)) != 0 && (memoryProperties.memoryTypes[i].propertyFlags & flags) == flags)
+                return i;
+        throw std::runtime_error("failed to find suitable memory type!");
+    }
+
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) 
+    {
         VkPhysicalDeviceMemoryProperties memProperties;
         vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
 
