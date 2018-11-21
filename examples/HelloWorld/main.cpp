@@ -834,8 +834,8 @@ private:
         if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &triangleLayout) != VK_SUCCESS)
             throw std::runtime_error("failed to create pipeline layout!");
 
-        auto vertShaderCode = readFile("shaders/base.vert.spv");
-        auto fragShaderCode = readFile("shaders/base.frag.spv");
+        auto vertShaderCode = readFile("shaders/Helloworld/base.vert.spv");
+        auto fragShaderCode = readFile("shaders/Helloworld/base.frag.spv");
 
         VkShaderModule triangleVS = createShaderModule(vertShaderCode);
         VkShaderModule triangleFS = createShaderModule(fragShaderCode);
