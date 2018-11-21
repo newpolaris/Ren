@@ -2,6 +2,8 @@
 #include <windows.h>
 #endif
 
+#include <volk.h>
+
 #define GLFW_INCLUDE_VULKAN
 #include <glfw/glfw3.h>
 
@@ -11,8 +13,6 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-
-#include <vulkan/vulkan.h>
 
 #include <chrono>
 #include <array>
@@ -506,6 +506,8 @@ private:
 
     void createInstance()
     {
+        volkInitialize();
+
         if (enableValidationLayers && !checkValidationLayerSupport())
             throw std::runtime_error("validation layers requested, but not available!");
 
@@ -536,6 +538,8 @@ private:
 
         if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS)
             throw std::runtime_error("failed to create instance!");
+
+        volkLoadInstance(instance);
 
     #ifdef _DEBUG
         uint32_t extensionCount = 0;

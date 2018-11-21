@@ -35,10 +35,10 @@ function(buildExample EXAMPLE_NAME)
 
     if(WIN32)
         add_executable(${EXAMPLE_NAME} ${MAIN_CPP} ${SOURCE} ${SHADERS})
-        target_link_libraries(${EXAMPLE_NAME} base meshoptimizer ${Vulkan_LIBRARY} ${ASSIMP_LIBRARIES} ${WINLIBS} glfw ${GLFW_LIBRARIES})
+        target_link_libraries(${EXAMPLE_NAME} base meshoptimizer volk ${Vulkan_LIBRARY} ${ASSIMP_LIBRARIES} ${WINLIBS} glfw ${GLFW_LIBRARIES})
     else(WIN32)
         add_executable(${EXAMPLE_NAME} ${MAIN_CPP} ${SOURCE} ${SHADERS})
-        target_link_libraries(${EXAMPLE_NAME} base meshoptimizer ${Vulkan_LIBRARY} ${ASSIMP_LIBRARIES} ${WINLIBS} glfw ${GLFW_LIBRARIES})
+        target_link_libraries(${EXAMPLE_NAME} base meshoptimizer volk ${Vulkan_LIBRARY} ${ASSIMP_LIBRARIES} ${WINLIBS} glfw ${GLFW_LIBRARIES})
     endif(WIN32)
     add_dependencies(${EXAMPLE_NAME} ${EXAMPLE_RESOURCE})
 
