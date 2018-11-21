@@ -57,7 +57,9 @@ function(buildExamples)
 endfunction(buildExamples)
 
 set (EXAMPLES
-        helloworld
+        01.helloworld
+        02.modelRendering
+        03.pushDescriptors
 )
 
 buildExamples()
