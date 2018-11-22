@@ -32,6 +32,14 @@ const int WIDTH = 800;
 const int HEIGHT = 600;
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
+#ifndef VK_CECHK
+#define VK_CHECK(call) \
+    do { \
+        VkResult result_ = call; \
+        assert(result_ == VK_SUCCESS); \
+    } while (0)
+#endif
+
 #ifndef ARRAYSIZE
 #define ARRAYSIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 #endif
@@ -43,6 +51,8 @@ const std::vector<const char*> validationLayers = {
 const std::vector<const char*> deviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
+    VK_KHR_16BIT_STORAGE_EXTENSION_NAME,
+    VK_KHR_8BIT_STORAGE_EXTENSION_NAME,
 };
 
 #ifdef NDEBUG
@@ -69,7 +79,7 @@ struct SwapChainSupportDetails {
 
 struct Vertex {
     float vx, vy, vz;
-    float nx, ny, nz;
+    uint8_t nx, ny, nz, nw;
     float tu, tv;
 };
 
@@ -96,14 +106,16 @@ bool loadMesh(Mesh& result, const std::string& path)
             int vti = file.f[i * 3 + 1];
             int vni = file.f[i * 3 + 2];
 
+            float nx = vni < 0 ? 0.f : file.vn[vi * 3 + 0];
+            float ny = vni < 0 ? 0.f : file.vn[vi * 3 + 1];
+            float nz = vni < 0 ? 1.f : file.vn[vi * 3 + 2];
+
             v.vx = file.v[vi * 3 + 0];
             v.vy = file.v[vi * 3 + 1];
             v.vz = file.v[vi * 3 + 2];
-
-            v.nx = vni < 0 ? 0.f : file.vn[vi * 3 + 0];
-            v.ny = vni < 0 ? 0.f : file.vn[vi * 3 + 1];
-            v.nz = vni < 0 ? 1.f : file.vn[vi * 3 + 2];
-
+            v.nx = uint8_t(nx * 127.f + 127.f); // TODO: fix rounding
+            v.ny = uint8_t(ny * 127.f + 127.f); // TODO: fix rounding
+            v.nz = uint8_t(nz * 127.f + 127.f); // TODO: fix rounding
             v.tu = vti < 0 ? 0.f : file.vt[vi * 3 + 0];
             v.tv = vti < 0 ? 0.f : file.vt[vi * 3 + 2];
         }
@@ -577,16 +589,20 @@ private:
             queueCreateInfos.push_back(queueCreateInfo);
         }
 
-        VkPhysicalDeviceFeatures deviceFeatures = {};
-        deviceFeatures.vertexPipelineStoresAndAtomics = VK_TRUE; // TODO: why need this?
+        VkPhysicalDeviceFeatures2 features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+        features.features.vertexPipelineStoresAndAtomics = VK_TRUE; // TODO: why need this?
+
+        VkPhysicalDevice8BitStorageFeaturesKHR features8 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES_KHR };
+        features8.storageBuffer8BitAccess = true;
+
+        VkPhysicalDevice16BitStorageFeatures features16 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES_KHR };
+        features16.storageBuffer16BitAccess = true;
 
         VkDeviceCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 
         createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
         createInfo.pQueueCreateInfos = queueCreateInfos.data();
-
-        createInfo.pEnabledFeatures = &deviceFeatures;
 
         createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
         createInfo.ppEnabledExtensionNames = deviceExtensions.data();
@@ -1402,6 +1418,14 @@ private:
     }
 
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData) {
+        // Validation layers don't correctly detect NonWriteable declarations for storage buffers: https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/73
+        if (strstr(pCallbackData->pMessage, "Shader requires vertexPipelineStoresAndAtomics but is not enabled on the device"))
+            return VK_FALSE;
+
+        // Validation layers don't correctly detect enablement of Int8 extensions: https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/372
+        if (strstr(pCallbackData->pMessage, "Capability Int8 is not allowed by Vulkan 1.1 specification"))
+            return VK_FALSE;
+
         const char* type = 
             (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
             ? "ERROR"
