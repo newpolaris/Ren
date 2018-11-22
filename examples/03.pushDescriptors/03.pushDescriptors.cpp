@@ -494,7 +494,6 @@ private:
         appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.pEngineName = "No Engine";
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-        // SHORTCUT: check if 1.1 is available via vkEnumerateInstanceVersion
         appInfo.apiVersion = VK_API_VERSION_1_1;
 
         VkInstanceCreateInfo createInfo = {};
@@ -594,9 +593,11 @@ private:
 
         VkPhysicalDevice8BitStorageFeaturesKHR features8 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES_KHR };
         features8.storageBuffer8BitAccess = true;
+        features8.uniformAndStorageBuffer8BitAccess = true;
 
         VkPhysicalDevice16BitStorageFeatures features16 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES_KHR };
         features16.storageBuffer16BitAccess = true;
+        features16.uniformAndStorageBuffer16BitAccess = true;
 
         VkDeviceCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -606,6 +607,9 @@ private:
 
         createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
         createInfo.ppEnabledExtensionNames = deviceExtensions.data();
+        createInfo.pNext = &features;
+        features.pNext = &features16;
+        features16.pNext = &features8;
 
         if (enableValidationLayers) {
             createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
@@ -1279,6 +1283,11 @@ private:
 
     bool isDeviceSuitable(VkPhysicalDevice device) const
     {
+        VkPhysicalDeviceProperties deviceProperties = {};
+        vkGetPhysicalDeviceProperties(device, &deviceProperties);
+        if (deviceProperties.apiVersion < VK_API_VERSION_1_1)
+            return false;
+
         QueueFamilyIndices indices = findQueueFamilies(device);
 
         bool extensionsSupported = checkDeviceExtensionSupport(device);
@@ -1420,10 +1429,6 @@ private:
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData) {
         // Validation layers don't correctly detect NonWriteable declarations for storage buffers: https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/73
         if (strstr(pCallbackData->pMessage, "Shader requires vertexPipelineStoresAndAtomics but is not enabled on the device"))
-            return VK_FALSE;
-
-        // Validation layers don't correctly detect enablement of Int8 extensions: https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/372
-        if (strstr(pCallbackData->pMessage, "Capability Int8 is not allowed by Vulkan 1.1 specification"))
             return VK_FALSE;
 
         const char* type = 

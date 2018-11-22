@@ -20,9 +20,8 @@ layout(location = 0) out vec4 color;
 
 void main()
 {
-    Vertex v = vertices[gl_VertexIndex];
-    vec3 position = vec3(v.x, v.y, v.z);
-    vec3 normal = vec3(v.nx, v.ny, v.nz) / 127.0 - 1.0;
+    vec3 position = vec3(vertices[gl_VertexIndex].x, vertices[gl_VertexIndex].y, vertices[gl_VertexIndex].z);
+    vec3 normal = vec3(int(vertices[gl_VertexIndex].nx), int(vertices[gl_VertexIndex].ny), int(vertices[gl_VertexIndex].nz)) / 127.0 - 1.0;
 
     gl_Position = vec4(position/3 + vec3(0.0, 0.0, 0.5), 1.0);
     color = vec4(normal * 0.5 + vec3(0.5), 1.0);
