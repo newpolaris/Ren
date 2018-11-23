@@ -46,7 +46,7 @@ const std::vector<const char*> deviceExtensions = {
 };
 
 #ifdef NDEBUG
-const bool enableValidationLayer = false;
+const bool enableValidationLayers = false;
 #else
 const bool enableValidationLayers = true;
 #endif
@@ -1118,10 +1118,6 @@ private:
         vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
     }
 
-    // VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT - near GPU, fastest
-    // VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT - access from CPU write even read
-    // VK_MEMORY_PROPERTY_HOST_COHERENT_BIT - whenevenr we do write from a CPU memory and then submit a comment to the gpu in a command buffer, you don't need to do extra operations to make sure this memory is like visible
-    // VK_MEMORY_PROPERTY_HOST_CACHED_BIT - fill the buffet and you want to read that 
     uint32_t selectMemoryType(const VkPhysicalDeviceMemoryProperties& memoryProperties, uint32_t memoryTypeBits, VkMemoryPropertyFlags flags)
     {
         for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++)

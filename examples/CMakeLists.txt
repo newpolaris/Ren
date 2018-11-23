@@ -16,7 +16,7 @@ function(buildExample EXAMPLE_NAME)
     ENDIF()
 	# Add shaders
     SET(SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../shaders/${EXAMPLE_NAME}")
-	file(GLOB SHADERS "${SHADER_DIR}/*.vert" "${SHADER_DIR}/*.frag" "${SHADER_DIR}/*.comp" "${SHADER_DIR}/*.geom" "${SHADER_DIR}/*.tesc" "${SHADER_DIR}/*.tese")
+	file(GLOB SHADERS "${SHADER_DIR}/*.vert" "${SHADER_DIR}/*.frag" "${SHADER_DIR}/*.comp" "${SHADER_DIR}/*.geom" "${SHADER_DIR}/*.tesc" "${SHADER_DIR}/*.tese" "${SHADER_DIR}/*.mesh")
     source_group("Shaders" FILES ${SHADERS})
 
     foreach(GLSL ${SHADERS})
@@ -60,6 +60,7 @@ set (EXAMPLES
         01.helloworld
         02.modelRendering
         03.pushDescriptors
+        04.meshlet
 )
 
 buildExamples()

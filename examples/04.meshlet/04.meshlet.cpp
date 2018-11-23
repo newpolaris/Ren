@@ -25,9 +25,22 @@
 #include <functional>
 #include <sstream>
 
-const int WIDTH = 800;
-const int HEIGHT = 600;
+#include <objparser.h>
+#include <meshoptimizer.h>
+
+const int WIDTH = 1280;
+const int HEIGHT = 960;
 const int MAX_FRAMES_IN_FLIGHT = 2;
+
+#define RTX 0
+
+#ifndef VK_CECHK
+#define VK_CHECK(call) \
+    do { \
+        VkResult result_ = call; \
+        assert(result_ == VK_SUCCESS); \
+    } while (0)
+#endif
 
 #ifndef ARRAYSIZE
 #define ARRAYSIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
@@ -38,7 +51,13 @@ const std::vector<const char*> validationLayers = {
 };
 
 const std::vector<const char*> deviceExtensions = {
-    VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
+    VK_KHR_16BIT_STORAGE_EXTENSION_NAME,
+    VK_KHR_8BIT_STORAGE_EXTENSION_NAME,
+#if RTX
+    VK_NV_MESH_SHADER_EXTENSION_NAME,
+#endif
 };
 
 #ifdef NDEBUG
@@ -46,23 +65,6 @@ const bool enableValidationLayers = false;
 #else
 const bool enableValidationLayers = true;
 #endif
-
-VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT* pCallback) {
-    auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
-    if (func != nullptr) {
-        return func(instance, pCreateInfo, pAllocator, pCallback);
-    }
-    else {
-        return VK_ERROR_EXTENSION_NOT_PRESENT;
-    }
-}
-
-void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT callback, const VkAllocationCallbacks* pAllocator) {
-    auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
-    if (func != nullptr) {
-        func(instance, callback, pAllocator);
-    }
-}
 
 struct QueueFamilyIndices {
     std::optional<uint32_t> graphicsFamily;
@@ -81,50 +83,146 @@ struct SwapChainSupportDetails {
 
 
 struct Vertex {
-    glm::vec2 pos;
-    glm::vec3 color;
+    float vx, vy, vz;
+    uint8_t nx, ny, nz, nw;
+    float tu, tv;
+};
 
-    static VkVertexInputBindingDescription getBindingDescription() {
-        VkVertexInputBindingDescription bindingDescription = {};
-        bindingDescription.binding = 0;
-        bindingDescription.stride = sizeof(Vertex);
-        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+struct Meshlet
+{
+    uint32_t vertices[64]; // not optimial just choose maximum
+    uint8_t indices[126]; // upto 8bit and one is used by gl_primitiveCountNV and todo divided by 3. up to 42 triangles
+    uint8_t indexCount;
+    uint8_t vertexCount;
+};
 
-        return bindingDescription;
+struct Mesh
+{
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+    std::vector<Meshlet> meshlets;
+};
+
+bool loadMesh(Mesh& result, const std::string& path)
+{
+    ObjFile file;
+    if (objParseFile(file, path.c_str()))
+    {
+        size_t index_count = file.f_size / 3;
+
+        std::vector<Vertex> vertices(index_count);
+
+        for (size_t i = 0; i < index_count; i++)
+        {
+            Vertex& v = vertices[i];
+
+            int vi = file.f[i * 3 + 0];
+            int vti = file.f[i * 3 + 1];
+            int vni = file.f[i * 3 + 2];
+
+            float nx = vni < 0 ? 0.f : file.vn[vi * 3 + 0];
+            float ny = vni < 0 ? 0.f : file.vn[vi * 3 + 1];
+            float nz = vni < 0 ? 1.f : file.vn[vi * 3 + 2];
+
+            v.vx = file.v[vi * 3 + 0];
+            v.vy = file.v[vi * 3 + 1];
+            v.vz = file.v[vi * 3 + 2];
+            v.nx = uint8_t(nx * 127.f + 127.f); // TODO: fix rounding
+            v.ny = uint8_t(ny * 127.f + 127.f); // TODO: fix rounding
+            v.nz = uint8_t(nz * 127.f + 127.f); // TODO: fix rounding
+            v.tu = vti < 0 ? 0.f : file.vt[vi * 3 + 0];
+            v.tv = vti < 0 ? 0.f : file.vt[vi * 3 + 2];
+        }
+
+        if (true)
+        {
+            result.vertices = vertices;
+            result.indices.resize(index_count);
+
+            for (size_t i = 0; i < index_count; i++)
+                result.indices[i] = uint32_t(i);
+        }
+        else
+        {
+            std::vector<uint32_t> remap(index_count);
+            size_t vertex_count = meshopt_generateVertexRemap(remap.data(), 0, index_count, vertices.data(), index_count, sizeof(Vertex));
+
+            result.vertices.resize(vertex_count);
+            result.indices.resize(index_count);
+
+            meshopt_remapVertexBuffer(result.vertices.data(), vertices.data(), index_count, sizeof(Vertex), remap.data());
+            meshopt_remapIndexBuffer(result.indices.data(), 0, index_count, remap.data());
+
+            // TODO: optimize the mesh for more efficient GPU rendering
+        }
+        return true;
     }
+    throw std::runtime_error("failed to load model!");
+}
 
-    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescription() {
-        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions = {};
+void buildMeshlets(Mesh& mesh)
+{
+    Meshlet meshlet = {};
+    std::vector<uint8_t> meshletVertices(mesh.vertices.size(), 0xff);
 
-        attributeDescriptions[0].binding = 0;
-        attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
-        attributeDescriptions[0].offset = offsetof(Vertex, pos);
+    for (size_t i = 0; i < mesh.indices.size(); i+= 3)
+    {
+        unsigned int a = mesh.indices[i + 0];
+        unsigned int b = mesh.indices[i + 1];
+        unsigned int c = mesh.indices[i + 2];
 
-        attributeDescriptions[1].binding = 0;
-        attributeDescriptions[1].location = 1;
-        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[1].offset = offsetof(Vertex, color);
+        uint8_t& av = meshletVertices[a];
+        uint8_t& bv = meshletVertices[b];
+        uint8_t& cv = meshletVertices[c];
 
-        return attributeDescriptions;
+        if (meshlet.vertexCount + (av == 0xff) + (bv == 0xff) + (cv == 0xff) > 64 || meshlet.indexCount + 3 > 126)
+        {
+            mesh.meshlets.push_back(meshlet);
+
+            for (size_t j = 0; j < meshlet.vertexCount; j++)
+                meshletVertices[meshlet.vertices[j]] = 0xff;
+            meshlet = {};
+        }
+
+        if (av == 0xff)
+        {
+            av = meshlet.vertexCount;
+            meshlet.vertices[meshlet.vertexCount] = a;
+            meshlet.vertexCount++;
+        }
+
+		if (bv == 0xff)
+		{
+			bv = meshlet.vertexCount;
+			meshlet.vertices[meshlet.vertexCount] = b;
+            meshlet.vertexCount++;
+		}
+
+		if (cv == 0xff)
+		{
+			cv = meshlet.vertexCount;
+			meshlet.vertices[meshlet.vertexCount] = c;
+            meshlet.vertexCount++;
+		}
+
+		meshlet.indices[meshlet.indexCount++] = av;
+		meshlet.indices[meshlet.indexCount++] = bv;
+		meshlet.indices[meshlet.indexCount++] = cv;
     }
+}
+
+struct Buffer
+{
+    VkBuffer buffer;
+    VkDeviceMemory memory;
+    void* data;
+    size_t size;
 };
 
 struct UniformBufferObject {
     glm::mat4 model;
     glm::mat4 view;
     glm::mat4 proj;
-};
-
-const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
-};
-
-const std::vector<uint16_t> indices = {
-    0, 2, 1, 0, 3, 2
 };
 
 class HelloTriangleApplication
@@ -166,15 +264,15 @@ private:
 
     VkRenderPass renderPass;
     VkDescriptorSetLayout descriptorSetLayout;
-    VkPipelineLayout triangleLayout;
+    VkPipelineLayout modelLayout;
     VkPipeline trianglePipeline;
 
     VkCommandPool commandPool;
 
-    VkBuffer vertexBuffer;
-    VkDeviceMemory vertexBufferMemory;
-    VkBuffer indexBuffer;
-    VkDeviceMemory indexBufferMemory;
+    VkBuffer vertexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
+    VkBuffer indexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory indexBufferMemory = VK_NULL_HANDLE;
 
     std::vector<VkBuffer> uniformBuffers;
     std::vector<VkDeviceMemory> uniformBuffersMemory;
@@ -214,8 +312,6 @@ private:
         createGraphicsPipeline();
         createFramebuffers();
         createCommandPool();
-        createVertexBuffer();
-        createIndexBuffer();
         createUniformBuffers();
         createDescriptorPool();
         createDescriptorSets();
@@ -243,16 +339,64 @@ private:
         QueueFamilyIndices familyIndices = findQueueFamilies(physicalDevice);
         VkCommandPool commandPool = createCommandPool(device, familyIndices);
 
-        VkCommandBufferAllocateInfo allocateInfo = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        VkCommandBufferAllocateInfo allocateInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
         allocateInfo.commandPool = commandPool;
-        allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocateInfo.level =  VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         allocateInfo.commandBufferCount = 1;
 
         if (vkAllocateCommandBuffers(device, &allocateInfo, &commandBuffer) != VK_SUCCESS)
             throw std::runtime_error("failed to allocate coomand buffer!");
 
-        while (!glfwWindowShouldClose(window))
+        VkPhysicalDeviceMemoryProperties memoryProperties;
+        vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
+
+        Mesh mesh;
+    #if _DEBUG
+        bool rcm = loadMesh(mesh, "models/bunny.obj");
+    #else
+        bool rcm = loadMesh(mesh, "models/happy-buddha.obj");
+    #endif
+        assert(rcm);
+
+    #if RTX
+        buildMeshlets(mesh);
+    #endif
+
+        Buffer vb = {};
+        // need validation layer warnning to use vertex_buffer_bit
+        createBuffer(vb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        Buffer ib = {};
+        createBuffer(ib, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+
+    #if RTX
+        Buffer mb = {};
+        createBuffer(mb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    #endif
+
+        assert(vb.size >= mesh.vertices.size() * sizeof(Vertex));
+        memcpy(vb.data, mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
+
+        assert(ib.size >= mesh.indices.size() * sizeof(uint32_t));
+        memcpy(ib.data, mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
+
+    #if RTX
+        assert(mb.size >= mesh.meshlets.size() * sizeof(Meshlet));
+        memcpy(mb.data, mesh.meshlets.data(), mesh.meshlets.size() * sizeof(Meshlet));
+    #endif
+        VkQueryPool queryPool = createQueryPool(device, 128);
+
+        VkPhysicalDeviceProperties props = {};
+        vkGetPhysicalDeviceProperties(physicalDevice, &props);
+        assert(props.limits.timestampComputeAndGraphics);
+
+        double frameCpuAvg = 0;
+        double frameGpuAvg = 0;
+        double frameWaitAvg = 0;
+
+        while (!glfwWindowShouldClose(window)) 
         {
+            double frameBegin = glfwGetTime()*1000;
+
             glfwPollEvents();
 
             vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, std::numeric_limits<uint64_t>::max());
@@ -271,16 +415,19 @@ private:
             if (vkResetCommandPool(device, commandPool, 0) != VK_SUCCESS)
                 throw std::runtime_error("failed to reset command pool!");
 
-            VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            VkCommandBufferBeginInfo beginInfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
             beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
             if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
                 throw std::runtime_error("failed to create Begin command buffer!");
 
+            vkCmdResetQueryPool(commandBuffer, queryPool, 0, 128);
+            vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 0);
+
             VkImageMemoryBarrier renderBeginBarrier = imageBarrier(swapChainImages[imageIndex], 0, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 1, &renderBeginBarrier);
 
-            VkClearValue clearColor = {glm::sin(float(glfwGetTime()))*0.5f + 0.5f, 0.5f, 0.5f, 1.0f};
+            VkClearValue clearColor = { glm::sin(float(glfwGetTime()))*0.5f+0.5f, 0.5f, 0.5f, 1.0f };
 
             VkRenderPassBeginInfo renderPassInfo = {};
             renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -308,19 +455,61 @@ private:
             vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
             vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, trianglePipeline);
-            vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+            VkDescriptorBufferInfo vbInfo = {};
+            vbInfo.buffer = vb.buffer;
+            vbInfo.range = vb.size;
+            vbInfo.offset = 0;
+
+        #if RTX
+            VkDescriptorBufferInfo mbInfo = {};
+            mbInfo.buffer = mb.buffer;
+            mbInfo.range = mb.size;
+            mbInfo.offset = 0;
+
+            VkWriteDescriptorSet descriptors[2] = {};
+            descriptors[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptors[0].dstBinding = 0;
+            descriptors[0].descriptorCount = 1;
+            descriptors[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            descriptors[0].pBufferInfo = &vbInfo;
+            descriptors[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptors[1].dstBinding = 1;
+            descriptors[1].descriptorCount = 1;
+            descriptors[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            descriptors[1].pBufferInfo = &mbInfo;
+
+            vkCmdPushDescriptorSetKHR(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, modelLayout, 0, ARRAYSIZE(descriptors), descriptors);
+            vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawMeshTasksNV(commandBuffer, uint32_t(mesh.meshlets.size()), 0);
+
+        #else
+            VkWriteDescriptorSet descriptors[1] = {};
+            descriptors[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptors[0].dstBinding = 0;
+            descriptors[0].descriptorCount = 1;
+            descriptors[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            descriptors[0].pBufferInfo = &vbInfo;
+
+            vkCmdPushDescriptorSetKHR(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, modelLayout, 0, ARRAYSIZE(descriptors), descriptors);
+            vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(commandBuffer, uint32_t(mesh.indices.size()), 1, 0, 0, 0);
+        #endif
+
             vkCmdEndRenderPass(commandBuffer);
 
             VkImageMemoryBarrier renderEndBarrier = imageBarrier(swapChainImages[imageIndex], VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 1, &renderEndBarrier);
 
+            vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 1);
+
             if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
                 throw std::runtime_error("failed to end command buffer!");
 
-            VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
-            VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
+            VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };
+            VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[currentFrame] };
             VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-            VkSubmitInfo submitInfo = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+            VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
             submitInfo.waitSemaphoreCount = 1;
             submitInfo.pWaitSemaphores = waitSemaphores;
             submitInfo.pWaitDstStageMask = waitStages;
@@ -353,12 +542,38 @@ private:
                 throw std::runtime_error("failed to present swap chain image!");
             }
 
+            double waitBegin = glfwGetTime() * 1000;;
+            VK_CHECK(vkDeviceWaitIdle(device));
+            double waitEnd = glfwGetTime() * 1000;;
+
+            uint64_t queryResults[2] = {};
+            (vkGetQueryPoolResults(device, queryPool, 0, ARRAYSIZE(queryResults), sizeof(queryResults), queryResults, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT));
+
+            double frameGpuBegin = double(queryResults[0]) * props.limits.timestampPeriod * 1e-6;
+            double frameGpuEnd = double(queryResults[1]) * props.limits.timestampPeriod * 1e-6;
+
+            double frameEnd = glfwGetTime() * 1000;;
+
+            frameCpuAvg = glm::mix(frameCpuAvg, (frameEnd - frameBegin), 0.05);
+            frameGpuAvg = glm::mix(frameGpuAvg, (frameGpuEnd - frameGpuBegin), 0.05);
+            frameWaitAvg = glm::mix(frameWaitAvg, (waitEnd - waitBegin), 0.05);
+
+            char title[256];
+            sprintf(title, "cpu: %.2f ms; wait time: %.2f ms; gpu: %.2f ms; triangles %d; meshlets %d", frameCpuAvg, frameWaitAvg, frameGpuAvg, int(mesh.indices.size() / 3), int(mesh.meshlets.size()));
+            glfwSetWindowTitle(window, title);
+
             // currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+
         }
+
+        vkDestroyQueryPool(device, queryPool, nullptr);
 
         vkDeviceWaitIdle(device);
 
         vkDestroyCommandPool(device, commandPool, nullptr);
+        
+        destroyBuffer(vb, device);
+        destroyBuffer(ib, device);
     }
 
 
@@ -369,7 +584,7 @@ private:
 
         for (auto imageView : swapChainImageViews)
             vkDestroyImageView(device, imageView, nullptr);
-
+        
         vkDestroySwapchainKHR(device, swapChain, nullptr);
     }
 
@@ -378,7 +593,7 @@ private:
 
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
         vkDestroyPipeline(device, trianglePipeline, nullptr);
-        vkDestroyPipelineLayout(device, triangleLayout, nullptr);
+        vkDestroyPipelineLayout(device, modelLayout, nullptr);
         vkDestroyRenderPass(device, renderPass, nullptr);
         vkDestroyDescriptorPool(device, descriptorPool, nullptr);
         for (size_t i = 0; i < swapChainImages.size(); i++) {
@@ -403,7 +618,7 @@ private:
         vkDestroyDevice(device, nullptr);
 
         if (enableValidationLayers)
-            DestroyDebugUtilsMessengerEXT(instance, callback, nullptr);
+            vkDestroyDebugUtilsMessengerEXT(instance, callback, nullptr);
 
         vkDestroySurfaceKHR(instance, surface, nullptr);
         vkDestroyInstance(instance, nullptr);
@@ -426,8 +641,7 @@ private:
         appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.pEngineName = "No Engine";
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-        // SHORTCUT: check if 1.1 is available via vkEnumerateInstanceVersion
-        appInfo.apiVersion = VK_API_VERSION_1_0;
+        appInfo.apiVersion = VK_API_VERSION_1_1;
 
         VkInstanceCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -474,7 +688,7 @@ private:
         createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
         createInfo.pfnUserCallback = debugCallback;
 
-        if (CreateDebugUtilsMessengerEXT(instance, &createInfo, nullptr, &callback) != VK_SUCCESS)
+        if (vkCreateDebugUtilsMessengerEXT(instance, &createInfo, nullptr, &callback) != VK_SUCCESS)
             throw std::runtime_error("failed to set up debug callback!");
     }
 
@@ -521,7 +735,21 @@ private:
             queueCreateInfos.push_back(queueCreateInfo);
         }
 
-        VkPhysicalDeviceFeatures deviceFeatures = {};
+        VkPhysicalDeviceFeatures2 features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+        features.features.vertexPipelineStoresAndAtomics = VK_TRUE; // TODO: why need this?
+
+        VkPhysicalDevice8BitStorageFeaturesKHR features8 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES_KHR };
+        features8.storageBuffer8BitAccess = true;
+        features8.uniformAndStorageBuffer8BitAccess = true;
+
+        VkPhysicalDevice16BitStorageFeatures features16 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES_KHR };
+        features16.storageBuffer16BitAccess = true;
+        features16.uniformAndStorageBuffer16BitAccess = true;
+
+    #if RTX
+        VkPhysicalDeviceMeshShaderFeaturesNV featuresMesh =  { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_NV };
+        featuresMesh.meshShader = true;
+    #endif
 
         VkDeviceCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -529,10 +757,15 @@ private:
         createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
         createInfo.pQueueCreateInfos = queueCreateInfos.data();
 
-        createInfo.pEnabledFeatures = &deviceFeatures;
-
         createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
         createInfo.ppEnabledExtensionNames = deviceExtensions.data();
+        createInfo.pNext = &features;
+        features.pNext = &features16;
+        features16.pNext = &features8;
+
+    #if RTX
+        features8.pNext = &featuresMesh;
+    #endif
 
         if (enableValidationLayers) {
             createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
@@ -736,34 +969,85 @@ private:
         }
     }
 
-    void createGraphicsPipeline() {
+    VkPipelineLayout createPipelineLayout(VkDevice device)
+    {
+    #if RTX
+        VkDescriptorSetLayoutBinding setBindings[2] = {};
+        setBindings[0].binding = 0;
+        setBindings[0].descriptorCount = 1;
+        setBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        setBindings[0].pImmutableSamplers = nullptr;
+        setBindings[0].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV;
+        setBindings[1].binding = 1;
+        setBindings[1].descriptorCount = 1;
+        setBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        setBindings[1].pImmutableSamplers = nullptr;
+        setBindings[1].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV;
+    #else
+        VkDescriptorSetLayoutBinding setBindings[1] = {};
+        setBindings[0].binding = 0;
+        setBindings[0].descriptorCount = 1;
+        setBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        setBindings[0].pImmutableSamplers = nullptr;
+        setBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    #endif
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = ARRAYSIZE(setBindings);
+        layoutInfo.pBindings = setBindings;
+        layoutInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
+
+        VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
+        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS)
+            throw std::runtime_error("failed to create descriptorSet layout");
+
         VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount = 1;
         pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
 
-        if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &triangleLayout) != VK_SUCCESS)
+        VkPipelineLayout layout;
+        if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &layout) != VK_SUCCESS)
             throw std::runtime_error("failed to create pipeline layout!");
 
-        auto vertShaderCode = readFile("shaders/01.helloWorld/base.vert.spv");
-        auto fragShaderCode = readFile("shaders/01.helloWorld/base.frag.spv");
+        // TODO: is this safe?
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
+        return layout;
+    }
+
+    void createGraphicsPipeline() {
+        modelLayout = createPipelineLayout(device);
+
+        auto fragShaderCode = readFile("shaders/04.meshlet/base.frag.spv");
+
+    #if RTX
+        auto vertShaderCode = readFile("shaders/04.meshlet/base.mesh.spv");
         VkShaderModule triangleVS = createShaderModule(vertShaderCode);
+    #else
+        auto vertShaderCode = readFile("shaders/04.meshlet/base.vert.spv");
+        VkShaderModule triangleVS = createShaderModule(vertShaderCode);
+    #endif
         VkShaderModule triangleFS = createShaderModule(fragShaderCode);
 
         VkPipelineCache pipelineCache = nullptr;
-        trianglePipeline = createGraphicsPipeline(device, pipelineCache, renderPass, triangleVS, triangleFS, triangleLayout);
+        trianglePipeline = createGraphicsPipeline(device, pipelineCache, renderPass, triangleVS, triangleFS, modelLayout);
         assert(trianglePipeline);
 
         vkDestroyShaderModule(device, triangleFS, nullptr);
         vkDestroyShaderModule(device, triangleVS, nullptr);
     }
 
-    VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, VkRenderPass renderPass, VkShaderModule vs, VkShaderModule fs, VkPipelineLayout layout)
+    VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, VkRenderPass renderPass, VkShaderModule vs, VkShaderModule fs, VkPipelineLayout layout) 
     {
         VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
         vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    #if RTX
+        vertShaderStageInfo.stage = VK_SHADER_STAGE_MESH_BIT_NV;
+    #else
         vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    #endif
         vertShaderStageInfo.module = vs;
         vertShaderStageInfo.pName = "main";
 
@@ -775,15 +1059,8 @@ private:
 
         VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-        auto bindingDescription = Vertex::getBindingDescription();
-        auto attributeDescriptions = Vertex::getAttributeDescription();
-
         VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
         vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        // vertexInputInfo.vertexBindingDescriptionCount = 1;
-        // vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-        // vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());;
-        // vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
         VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
         inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -801,7 +1078,7 @@ private:
         rasterizer.rasterizerDiscardEnable = VK_FALSE;
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
         rasterizer.lineWidth = 1.0f;
-        rasterizer.cullMode = VK_CULL_MODE_NONE;
+        rasterizer.cullMode = VK_CULL_MODE_FRONT_BIT;
         rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
         rasterizer.depthBiasEnable = VK_FALSE;
 
@@ -825,9 +1102,9 @@ private:
         colorBlending.blendConstants[2] = 0.0f;
         colorBlending.blendConstants[3] = 0.0f;
 
-        VkDynamicState dynamicStates[]{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkDynamicState dynamicStates[]  { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 
-        VkPipelineDynamicStateCreateInfo dynamicState = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+        VkPipelineDynamicStateCreateInfo dynamicState = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
         dynamicState.dynamicStateCount = ARRAYSIZE(dynamicStates);
         dynamicState.pDynamicStates = dynamicStates;
 
@@ -841,7 +1118,7 @@ private:
         pipelineInfo.pRasterizationState = &rasterizer;
         pipelineInfo.pMultisampleState = &multisampling;
         pipelineInfo.pColorBlendState = &colorBlending;
-        pipelineInfo.layout = triangleLayout;
+        pipelineInfo.layout = modelLayout;
         pipelineInfo.renderPass = renderPass;
         pipelineInfo.subpass = 0;
         pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
@@ -894,7 +1171,7 @@ private:
 
     VkCommandPool createCommandPool(VkDevice device, QueueFamilyIndices familyIndex)
     {
-        VkCommandPoolCreateInfo createInfo = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        VkCommandPoolCreateInfo createInfo = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
         createInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
         createInfo.queueFamilyIndex = familyIndex.graphicsFamily.value();
 
@@ -924,7 +1201,7 @@ private:
         allocInfo.allocationSize = memRequirements.size;
         allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
 
-        // TODO: limited to 4096, so use it with offset etc..
+        // TODO: limited to number 4096, so use it with offset etc..
         if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
             throw std::runtime_error("failed to allocate vertex buffer memory!");
         }
@@ -932,44 +1209,52 @@ private:
         vkBindBufferMemory(device, buffer, bufferMemory, 0);
     }
 
-    void createVertexBuffer() {
-        VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+    void createBuffer(Buffer& result, VkDevice device, const VkPhysicalDeviceMemoryProperties& memoryPropertices, size_t size, VkBufferUsageFlags usage)
+    {
+        // create buffer object that doesn't have memory back in, just dummy handle
+        VkBufferCreateInfo createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        createInfo.size = size;
+        createInfo.usage = usage;
+        createInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+        VkBuffer buffer;
+        if (vkCreateBuffer(device, &createInfo, 0, &buffer) != VK_SUCCESS)
+            throw std::runtime_error("failed to createBufer!");
+
+        // how mush memory does use
+        VkMemoryRequirements memoryRequirements;
+        vkGetBufferMemoryRequirements(device, buffer, &memoryRequirements);
+
+        uint32_t memoryTypeIndex = selectMemoryType(memoryPropertices, memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+        VkMemoryAllocateInfo allocInfo = {};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memoryRequirements.size;
+        allocInfo.memoryTypeIndex = memoryTypeIndex;
+
+        VkDeviceMemory memory = 0;
+        if (vkAllocateMemory(device, &allocInfo, nullptr, &memory) != VK_SUCCESS)
+            throw std::runtime_error("failed to allocate memory!");
+
+        // ties memory and object together
+        if (vkBindBufferMemory(device, buffer, memory, 0) != VK_SUCCESS)
+            throw std::runtime_error("failed to bind buffer memory!");
 
         void* data = nullptr;
-        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-        memcpy(data, vertices.data(), (size_t)bufferSize);
-        vkUnmapMemory(device, stagingBufferMemory);
+        if (vkMapMemory(device, memory, 0, size, 0, &data) != VK_SUCCESS)
+            throw std::runtime_error("map memory");
 
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
-
-        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
-
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
+        result.buffer = buffer;
+        result.memory = memory;
+        result.data = data;
+        result.size = size;
     }
 
-    void createIndexBuffer() {
-        VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
-
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-        void* data = nullptr;
-        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-        memcpy(data, indices.data(), (size_t)bufferSize);
-        vkUnmapMemory(device, stagingBufferMemory);
-
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
-
-        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
-
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
+    void destroyBuffer(const Buffer& buffer, VkDevice device)
+    {
+        vkFreeMemory(device, buffer.memory, nullptr);
+        vkDestroyBuffer(device, buffer.buffer, nullptr);
     }
 
     void createUniformBuffers()
@@ -1019,7 +1304,20 @@ private:
         vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
     }
 
-    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+    // VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT - near GPU, fastest
+    // VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT - access from CPU write even read
+    // VK_MEMORY_PROPERTY_HOST_COHERENT_BIT - whenevenr we do write from a CPU memory and then submit a comment to the gpu in a command buffer, you don't need to do extra operations to make sure this memory is like visible
+    // VK_MEMORY_PROPERTY_HOST_CACHED_BIT - gpu fills buffer and you want to read that 
+    uint32_t selectMemoryType(const VkPhysicalDeviceMemoryProperties& memoryProperties, uint32_t memoryTypeBits, VkMemoryPropertyFlags flags)
+    {
+        for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++)
+            if ((memoryTypeBits & (1 << i)) != 0 && (memoryProperties.memoryTypes[i].propertyFlags & flags) == flags)
+                return i;
+        throw std::runtime_error("failed to find suitable memory type!");
+    }
+
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) 
+    {
         VkPhysicalDeviceMemoryProperties memProperties;
         vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
 
@@ -1066,7 +1364,7 @@ private:
 
         void* data = nullptr;
         vkMapMemory(device, uniformBuffersMemory[currentImage], 0, sizeof(ubo), 0, &data);
-        memcpy(data, &ubo, sizeof(ubo));
+            memcpy(data, &ubo, sizeof(ubo));
         vkUnmapMemory(device, uniformBuffersMemory[currentImage]);
     }
 
@@ -1164,6 +1462,11 @@ private:
 
     bool isDeviceSuitable(VkPhysicalDevice device) const
     {
+        VkPhysicalDeviceProperties deviceProperties = {};
+        vkGetPhysicalDeviceProperties(device, &deviceProperties);
+        if (deviceProperties.apiVersion < VK_API_VERSION_1_1)
+            return false;
+
         QueueFamilyIndices indices = findQueueFamilies(device);
 
         bool extensionsSupported = checkDeviceExtensionSupport(device);
@@ -1192,6 +1495,17 @@ private:
         }
 
         return requiredExtensions.empty();
+    }
+
+    VkQueryPool createQueryPool(VkDevice device, uint32_t queryCount)
+    {
+        VkQueryPoolCreateInfo createInfo = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+        createInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        createInfo.queryCount = queryCount;
+
+        VkQueryPool result = VK_NULL_HANDLE;
+        VK_CHECK(vkCreateQueryPool(device, &createInfo, 0, &result));
+        return result;
     }
 
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) const
@@ -1241,7 +1555,7 @@ private:
 
     VkImageMemoryBarrier imageBarrier(VkImage image, VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask, VkImageLayout oldLayout, VkImageLayout newLayout)
     {
-        VkImageMemoryBarrier result = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        VkImageMemoryBarrier result = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
 
         result.srcAccessMask = srcAccessMask;
         result.dstAccessMask = dstAccessMask;
@@ -1303,20 +1617,24 @@ private:
     }
 
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData) {
-        const char* type =
+        // Validation layers don't correctly detect NonWriteable declarations for storage buffers: https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/73
+        if (strstr(pCallbackData->pMessage, "Shader requires vertexPipelineStoresAndAtomics but is not enabled on the device"))
+            return VK_FALSE;
+
+        const char* type = 
             (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
             ? "ERROR"
             : (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
-            ? "WARNING"
-            : "INFO";
+                ? "WARNING"
+                : "INFO";
 
         std::stringstream message;
-        message << type << ": " << pCallbackData->pMessage;
+        message << type << ": " << pCallbackData->pMessage << "\n";
 
     #ifdef _WIN32
         OutputDebugStringA(message.str().c_str());
     #endif
-        std::cerr << message.str() << std::endl;
+        std::cerr << message.str();
 
         if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
             assert(!"Validation error occurs!");
