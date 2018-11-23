@@ -395,9 +395,8 @@ private:
 
         while (!glfwWindowShouldClose(window)) 
         {
-            double frameBegin = glfwGetTime()*1000;
-
             glfwPollEvents();
+            double frameBegin = glfwGetTime()*1000;
 
             vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, std::numeric_limits<uint64_t>::max());
 
@@ -541,13 +540,12 @@ private:
             else if (result != VK_SUCCESS) {
                 throw std::runtime_error("failed to present swap chain image!");
             }
+            // VK_CHECK(vkDeviceWaitIdle(device));
 
             double waitBegin = glfwGetTime() * 1000;;
-            VK_CHECK(vkDeviceWaitIdle(device));
-            double waitEnd = glfwGetTime() * 1000;;
-
             uint64_t queryResults[2] = {};
-            (vkGetQueryPoolResults(device, queryPool, 0, ARRAYSIZE(queryResults), sizeof(queryResults), queryResults, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT));
+            VK_CHECK(vkGetQueryPoolResults(device, queryPool, 0, ARRAYSIZE(queryResults), sizeof(queryResults), queryResults, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT));
+            double waitEnd = glfwGetTime() * 1000;;
 
             double frameGpuBegin = double(queryResults[0]) * props.limits.timestampPeriod * 1e-6;
             double frameGpuEnd = double(queryResults[1]) * props.limits.timestampPeriod * 1e-6;
@@ -574,6 +572,9 @@ private:
         
         destroyBuffer(vb, device);
         destroyBuffer(ib, device);
+    #if RTX
+        destroyBuffer(mb, device);
+    #endif
     }
 
 
@@ -976,19 +977,16 @@ private:
         setBindings[0].binding = 0;
         setBindings[0].descriptorCount = 1;
         setBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        setBindings[0].pImmutableSamplers = nullptr;
         setBindings[0].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV;
         setBindings[1].binding = 1;
         setBindings[1].descriptorCount = 1;
         setBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        setBindings[1].pImmutableSamplers = nullptr;
         setBindings[1].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV;
     #else
         VkDescriptorSetLayoutBinding setBindings[1] = {};
         setBindings[0].binding = 0;
         setBindings[0].descriptorCount = 1;
         setBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        setBindings[0].pImmutableSamplers = nullptr;
         setBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     #endif
 
