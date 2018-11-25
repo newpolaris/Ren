@@ -198,10 +198,9 @@ void buildMeshlets(Mesh& mesh)
 		meshlet.indices[meshlet.triangleCount * 3 + 1] = bv;
 		meshlet.indices[meshlet.triangleCount * 3 + 2] = cv;
         meshlet.triangleCount++;
-
-        if (meshlet.triangleCount)
-            mesh.meshlets.push_back(meshlet);
     }
+    if (meshlet.triangleCount)
+        mesh.meshlets.push_back(meshlet);
 }
 
 struct Buffer
@@ -259,11 +258,14 @@ private:
     std::vector<VkFramebuffer> swapChainFramebuffers;
 
     VkRenderPass renderPass;
-    VkDescriptorSetLayout descriptorSetLayout;
-    VkPipelineLayout modelLayout = VK_NULL_HANDLE;
-    VkPipelineLayout modelLayoutMeshlet = VK_NULL_HANDLE;
+    VkDescriptorSetLayout meshDescriptorLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout meshletDescriptorLayout = VK_NULL_HANDLE;
+    VkPipelineLayout meshPipelineLayout = VK_NULL_HANDLE;
+    VkPipelineLayout meshletPipelineLayout = VK_NULL_HANDLE;
+    VkDescriptorUpdateTemplate meshUpdateTemplate = VK_NULL_HANDLE;
+    VkDescriptorUpdateTemplate meshletUpdateTemplate = VK_NULL_HANDLE;
     VkPipeline meshPipeline = VK_NULL_HANDLE;
-    VkPipeline meshPipelineMeshlet = VK_NULL_HANDLE;
+    VkPipeline meshletPipeline = VK_NULL_HANDLE;
 
     VkCommandPool commandPool;
 
@@ -274,8 +276,6 @@ private:
 
     std::vector<VkBuffer> uniformBuffers;
     std::vector<VkDeviceMemory> uniformBuffersMemory;
-    VkDescriptorPool descriptorPool;
-    std::vector<VkDescriptorSet> descriptorSets;
 
     VkCommandBuffer commandBuffer;
 
@@ -307,13 +307,10 @@ private:
         createSwapChain();
         createImageViews();
         createRenderPass();
-        createDescriptorSetLayout();
         createGraphicsPipelines();
         createFramebuffers();
         createCommandPool();
         createUniformBuffers();
-        createDescriptorPool();
-        createDescriptorSets();
         createSyncObjects();
     }
 
@@ -448,7 +445,7 @@ private:
 
             if (bMehsShaderEnabled)
             {
-                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineMeshlet);
+                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshletPipeline);
 
                 VkDescriptorBufferInfo vbInfo = {};
                 vbInfo.buffer = vb.buffer;
@@ -460,19 +457,13 @@ private:
                 mbInfo.range = mb.size;
                 mbInfo.offset = 0;
 
-                VkWriteDescriptorSet descriptors[2] = {};
-                descriptors[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                descriptors[0].dstBinding = 0;
-                descriptors[0].descriptorCount = 1;
-                descriptors[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-                descriptors[0].pBufferInfo = &vbInfo;
-                descriptors[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                descriptors[1].dstBinding = 1;
-                descriptors[1].descriptorCount = 1;
-                descriptors[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-                descriptors[1].pBufferInfo = &mbInfo;
+                struct Descriptorinfo {
+                    VkDescriptorBufferInfo a, b;
+                } descriptorInfo {
+                    vbInfo, mbInfo
+                };
 
-                vkCmdPushDescriptorSetKHR(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, modelLayoutMeshlet, 0, ARRAYSIZE(descriptors), descriptors);
+                vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshletUpdateTemplate, meshletPipelineLayout, 0, &descriptorInfo);
                 vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
                 vkCmdDrawMeshTasksNV(commandBuffer, uint32_t(mesh.meshlets.size()), 0);
             }
@@ -485,14 +476,7 @@ private:
                 vbInfo.range = vb.size;
                 vbInfo.offset = 0;
 
-                VkWriteDescriptorSet descriptors[1] = {};
-                descriptors[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                descriptors[0].dstBinding = 0;
-                descriptors[0].descriptorCount = 1;
-                descriptors[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-                descriptors[0].pBufferInfo = &vbInfo;
-
-                vkCmdPushDescriptorSetKHR(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, modelLayout, 0, ARRAYSIZE(descriptors), descriptors);
+                vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshUpdateTemplate, meshPipelineLayout, 0, &vbInfo);
                 vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
                 vkCmdDrawIndexed(commandBuffer, uint32_t(mesh.indices.size()), 1, 0, 0, 0);
             }
@@ -594,13 +578,15 @@ private:
     void cleanup() {
         cleanupSwapChain();
 
-        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+        vkDestroyDescriptorSetLayout(device, meshDescriptorLayout, nullptr);
+        vkDestroyDescriptorSetLayout(device, meshletDescriptorLayout, nullptr);
         vkDestroyPipeline(device, meshPipeline, nullptr);
-        vkDestroyPipeline(device, meshPipelineMeshlet, nullptr);
-        vkDestroyPipelineLayout(device, modelLayout, nullptr);
-        vkDestroyPipelineLayout(device, modelLayoutMeshlet, nullptr);
+        vkDestroyPipeline(device, meshletPipeline, nullptr);
+        vkDestroyPipelineLayout(device, meshPipelineLayout, nullptr);
+        vkDestroyDescriptorUpdateTemplate(device, meshUpdateTemplate, nullptr);
+        vkDestroyDescriptorUpdateTemplate(device, meshletUpdateTemplate, nullptr);
+        vkDestroyPipelineLayout(device, meshletPipelineLayout, nullptr);
         vkDestroyRenderPass(device, renderPass, nullptr);
-        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
         for (size_t i = 0; i < swapChainImages.size(); i++) {
             vkDestroyBuffer(device, uniformBuffers[i], nullptr);
             vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
@@ -915,82 +901,11 @@ private:
             throw std::runtime_error("failed to create render pass!");
     }
 
-    void createDescriptorSetLayout()
-    {
-        VkDescriptorSetLayoutBinding uboLayoutBinding = {};
-        uboLayoutBinding.binding = 0;
-        uboLayoutBinding.descriptorCount = 1;
-        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        uboLayoutBinding.pImmutableSamplers = nullptr;
-        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-
-        VkDescriptorSetLayoutCreateInfo layoutInfo = {};
-        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layoutInfo.bindingCount = 1;
-        layoutInfo.pBindings = &uboLayoutBinding;
-
-        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create descriptor set layout!");
-        }
-    }
-
-    void createDescriptorPool()
-    {
-        VkDescriptorPoolSize poolSize = {};
-        poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSize.descriptorCount = static_cast<uint32_t>(swapChainImages.size());
-
-        VkDescriptorPoolCreateInfo poolInfo = {};
-        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.poolSizeCount = 1;
-        poolInfo.pPoolSizes = &poolSize;
-        poolInfo.maxSets = static_cast<uint32_t>(swapChainImages.size());
-        poolInfo.flags = 0; // optional
-
-        if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create descriptor pool!");
-        }
-    }
-
-    void createDescriptorSets()
-    {
-        std::vector<VkDescriptorSetLayout> layouts(swapChainImages.size(), descriptorSetLayout);
-        VkDescriptorSetAllocateInfo allocInfo = {};
-        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        allocInfo.descriptorPool = descriptorPool;
-        allocInfo.descriptorSetCount = static_cast<uint32_t>(swapChainImages.size());
-        allocInfo.pSetLayouts = layouts.data();
-
-        descriptorSets.resize(swapChainImages.size());
-        if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate descriptor sets!");
-        }
-
-        for (size_t i = 0; i < swapChainImages.size(); i++) {
-            VkDescriptorBufferInfo bufferInfo = {};
-            bufferInfo.buffer = uniformBuffers[i];
-            bufferInfo.offset = 0;
-            bufferInfo.range = sizeof(UniformBufferObject);
-
-            VkWriteDescriptorSet descriptorWrite = {};
-            descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrite.dstSet = descriptorSets[i];
-            descriptorWrite.dstBinding = 0;
-            descriptorWrite.dstArrayElement = 0;
-            descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            descriptorWrite.descriptorCount = 1;
-            descriptorWrite.pBufferInfo = &bufferInfo;
-            descriptorWrite.pImageInfo = nullptr; // optional
-            descriptorWrite.pTexelBufferView = nullptr; // optional
-
-            vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
-        }
-    }
-
-
     void createGraphicsPipelines()
     {
-        modelLayout = createPipelineLayout(device, false);
+        meshDescriptorLayout = createDescriptorSetLayout(device, false);
+        meshPipelineLayout = createPipelineLayout(device, meshDescriptorLayout, false);
+        meshUpdateTemplate = createDescriptorUpdateTemplate(device, meshDescriptorLayout, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineLayout, false);
 
         auto fragShaderCode = readFile("shaders/04.meshlet/base.frag.spv");
         auto vertShaderCode = readFile("shaders/04.meshlet/base.vert.spv");
@@ -998,15 +913,17 @@ private:
         VkShaderModule meshFS = createShaderModule(device, fragShaderCode);
 
         VkPipelineCache pipelineCache = nullptr;
-        meshPipeline = createGraphicsPipeline(device, pipelineCache, renderPass, meshVS, meshFS, modelLayout, false);
+        meshPipeline = createGraphicsPipeline(device, pipelineCache, renderPass, meshVS, meshFS, meshPipelineLayout, false);
 
         if (bMeshShaderSupported)
         {
-            modelLayoutMeshlet = createPipelineLayout(device, true);
+            meshletDescriptorLayout = createDescriptorSetLayout(device, true);
+            meshletPipelineLayout = createPipelineLayout(device, meshletDescriptorLayout, true);
             auto meshShaderCode = readFile("shaders/04.meshlet/base.mesh.spv");
             VkPipelineCache pipelineMeshletCache = nullptr;
             VkShaderModule meshMS = createShaderModule(device, meshShaderCode);
-            meshPipelineMeshlet = createGraphicsPipeline(device, pipelineMeshletCache, renderPass, meshMS, meshFS, modelLayoutMeshlet, true);
+            meshletPipeline = createGraphicsPipeline(device, pipelineMeshletCache, renderPass, meshMS, meshFS, meshletPipelineLayout, true);
+            meshletUpdateTemplate = createDescriptorUpdateTemplate(device, meshletDescriptorLayout, VK_PIPELINE_BIND_POINT_GRAPHICS, meshletPipelineLayout, true);
             vkDestroyShaderModule(device, meshMS, nullptr);
         }
 
@@ -1478,6 +1395,10 @@ private:
 
 
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData) {
+        // Validation layers don't correctly track set assignments when using push descriptors with update templates: https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/341
+        if (strstr(pCallbackData->pMessage, "uses set #0 but that set is not bound."))
+            return VK_FALSE;
+
         // Validation layers don't correctly detect NonWriteable declarations for storage buffers: https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/73
         if (strstr(pCallbackData->pMessage, "Shader requires vertexPipelineStoresAndAtomics but is not enabled on the device"))
             return VK_FALSE;
