@@ -33,7 +33,6 @@ const int WIDTH = 1280;
 const int HEIGHT = 960;
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
-#define FVF 0
 #define RTX 0
 
 #ifndef VK_CECHK
@@ -57,7 +56,7 @@ const std::vector<const char*> deviceExtensions = {
     VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
     VK_KHR_16BIT_STORAGE_EXTENSION_NAME,
     VK_KHR_8BIT_STORAGE_EXTENSION_NAME,
-#if RTX && !FVF
+#if RTX
     VK_NV_MESH_SHADER_EXTENSION_NAME,
 #endif
 };
@@ -376,12 +375,7 @@ private:
         createBuffer(scratch, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
         Buffer vb = {};
-        // need validation layer warnning to use vertex_buffer_bit
-    #if FVF
-        createBuffer(vb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    #else
         createBuffer(vb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    #endif
         Buffer ib = {};
         createBuffer(ib, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     #if RTX
@@ -391,9 +385,9 @@ private:
 
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, vb, scratch, mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, ib, scratch, mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
-#if RTX
+    #if RTX
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, mb, scratch, mesh.meshlets.data(), mesh.meshlets.size() * sizeof(Meshlet));
-#endif
+    #endif
 
         VkQueryPool queryPool = createQueryPool(device, 128);
 
@@ -467,14 +461,7 @@ private:
             vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline);
 
-        #if FVF
-            vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
-            VkDeviceSize offset = 0;
-            VkBuffer vbBuffer[] = { vb.buffer };
-            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vbBuffer, &offset);
-            vkCmdDrawIndexed(commandBuffer, uint32_t(mesh.indices.size()), 1, 0, 0, 0);
-
-        #elif RTX
+        #if RTX
             VkDescriptorBufferInfo vbInfo = {};
             vbInfo.buffer = vb.buffer;
             vbInfo.range = vb.size;
@@ -773,7 +760,7 @@ private:
         features16.storageBuffer16BitAccess = true;
         features16.uniformAndStorageBuffer16BitAccess = true;
 
-    #if RTX && !FVF
+    #if RTX
         VkPhysicalDeviceMeshShaderFeaturesNV featuresMesh =  { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_NV };
         featuresMesh.meshShader = true;
     #endif
@@ -789,8 +776,7 @@ private:
         createInfo.pNext = &features;
         features.pNext = &features16;
         features16.pNext = &features8;
-
-    #if RTX && !FVF
+    #if RTX
         features8.pNext = &featuresMesh;
     #endif
 
@@ -1018,11 +1004,9 @@ private:
 
         VkDescriptorSetLayoutCreateInfo layoutInfo = {};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    #if !FVF
         layoutInfo.bindingCount = ARRAYSIZE(setBindings);
         layoutInfo.pBindings = setBindings;
         layoutInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
-    #endif
 
         VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
         if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS)
@@ -1049,9 +1033,7 @@ private:
         auto fragShaderCode = readFile("shaders/04.meshlet/base.frag.spv");
 
 
-    #if FVF
-        auto vertShaderCode = readFile("shaders/04.meshlet/basefvf.vert.spv");
-    #elif RTX
+    #if RTX
         auto vertShaderCode = readFile("shaders/04.meshlet/base.mesh.spv");
     #else
         auto vertShaderCode = readFile("shaders/04.meshlet/base.vert.spv");
@@ -1087,34 +1069,8 @@ private:
 
         VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-    #if FVF
-        VkVertexInputBindingDescription inputbindings[1] = {};
-        inputbindings[0].binding = 0;
-        inputbindings[0].stride = sizeof(Vertex);
-
-        VkVertexInputAttributeDescription inputAttributes[3] = {};
-        inputAttributes[0].binding = 0;
-        inputAttributes[0].location = 0;
-        inputAttributes[0].format = VK_FORMAT_R16G16B16A16_SFLOAT;
-        inputAttributes[0].offset = offsetof(Vertex, vx);
-        inputAttributes[1].binding = 0;
-        inputAttributes[1].location = 1;
-        inputAttributes[1].format = VK_FORMAT_R8G8B8A8_UINT;
-        inputAttributes[1].offset = offsetof(Vertex, nx);
-        inputAttributes[2].binding = 0;
-        inputAttributes[2].location = 2;
-        inputAttributes[2].format = VK_FORMAT_R16G16_SFLOAT;
-        inputAttributes[2].offset = offsetof(Vertex, tu);
-    #endif
-
         VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
         vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    #if FVF
-        vertexInputInfo.vertexBindingDescriptionCount = ARRAYSIZE(inputbindings);
-        vertexInputInfo.pVertexBindingDescriptions = inputbindings;
-        vertexInputInfo.vertexAttributeDescriptionCount = ARRAYSIZE(inputAttributes);
-        vertexInputInfo.pVertexAttributeDescriptions = inputAttributes;
-    #endif
 
         VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
         inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
