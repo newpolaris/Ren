@@ -85,16 +85,16 @@ struct SwapChainSupportDetails {
 
 
 struct Vertex {
-    float vx, vy, vz;
+    uint16_t vx, vy, vz, vw;
     uint8_t nx, ny, nz, nw;
-    float tu, tv;
+    uint16_t tu, tv;
 };
 
 struct Meshlet
 {
-    uint32_t vertices[64]; // not optimial just choose maximum
-    uint8_t indices[126]; // upto 8bit and one is used by gl_primitiveCountNV and todo divided by 3. up to 42 triangles
-    uint8_t indexCount;
+    uint32_t vertices[64];
+    uint8_t indices[126*3]; // up to 126 triangles
+    uint8_t triangleCount;
     uint8_t vertexCount;
 };
 
@@ -126,14 +126,15 @@ bool loadMesh(Mesh& result, const std::string& path)
             float ny = vni < 0 ? 0.f : file.vn[vi * 3 + 1];
             float nz = vni < 0 ? 1.f : file.vn[vi * 3 + 2];
 
-            v.vx = file.v[vi * 3 + 0];
-            v.vy = file.v[vi * 3 + 1];
-            v.vz = file.v[vi * 3 + 2];
+            v.vx = meshopt_quantizeHalf(file.v[vi * 3 + 0]);
+            v.vy = meshopt_quantizeHalf(file.v[vi * 3 + 1]);
+            v.vz = meshopt_quantizeHalf(file.v[vi * 3 + 2]);
+            v.vw = 0;
             v.nx = uint8_t(nx * 127.f + 127.f); // TODO: fix rounding
             v.ny = uint8_t(ny * 127.f + 127.f); // TODO: fix rounding
             v.nz = uint8_t(nz * 127.f + 127.f); // TODO: fix rounding
-            v.tu = vti < 0 ? 0.f : file.vt[vi * 3 + 0];
-            v.tv = vti < 0 ? 0.f : file.vt[vi * 3 + 2];
+            v.tu = meshopt_quantizeHalf(vti < 0 ? 0.f : file.vt[vi * 3 + 0]);
+            v.tv = meshopt_quantizeHalf(vti < 0 ? 0.f : file.vt[vi * 3 + 2]);
         }
 
         if (false)
@@ -178,7 +179,7 @@ void buildMeshlets(Mesh& mesh)
         uint8_t& bv = meshletVertices[b];
         uint8_t& cv = meshletVertices[c];
 
-        if (meshlet.vertexCount + (av == 0xff) + (bv == 0xff) + (cv == 0xff) > 64 || meshlet.indexCount + 3 > 126)
+        if (meshlet.vertexCount + (av == 0xff) + (bv == 0xff) + (cv == 0xff) > 64 || meshlet.triangleCount >= 126)
         {
             mesh.meshlets.push_back(meshlet);
 
@@ -208,9 +209,13 @@ void buildMeshlets(Mesh& mesh)
             meshlet.vertexCount++;
 		}
 
-		meshlet.indices[meshlet.indexCount++] = av;
-		meshlet.indices[meshlet.indexCount++] = bv;
-		meshlet.indices[meshlet.indexCount++] = cv;
+		meshlet.indices[meshlet.triangleCount * 3 + 0] = av;
+		meshlet.indices[meshlet.triangleCount * 3 + 1] = bv;
+		meshlet.indices[meshlet.triangleCount * 3 + 2] = cv;
+        meshlet.triangleCount++;
+
+        if (meshlet.triangleCount)
+            mesh.meshlets.push_back(meshlet);
     }
 }
 
@@ -1090,7 +1095,7 @@ private:
         VkVertexInputAttributeDescription inputAttributes[3] = {};
         inputAttributes[0].binding = 0;
         inputAttributes[0].location = 0;
-        inputAttributes[0].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+        inputAttributes[0].format = VK_FORMAT_R16G16B16A16_SFLOAT;
         inputAttributes[0].offset = offsetof(Vertex, vx);
         inputAttributes[1].binding = 0;
         inputAttributes[1].location = 1;
@@ -1098,7 +1103,7 @@ private:
         inputAttributes[1].offset = offsetof(Vertex, nx);
         inputAttributes[2].binding = 0;
         inputAttributes[2].location = 2;
-        inputAttributes[2].format = VK_FORMAT_R32G32_SFLOAT;
+        inputAttributes[2].format = VK_FORMAT_R16G16_SFLOAT;
         inputAttributes[2].offset = offsetof(Vertex, tu);
     #endif
 

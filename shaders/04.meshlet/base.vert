@@ -1,14 +1,12 @@
 #version 450
-#extension GL_ARB_separate_shader_objects : enable
 #extension GL_EXT_shader_8bit_storage : require
 #extension GL_EXT_shader_16bit_storage : require
-#extension GL_KHX_shader_explicit_arithmetic_types : require
 
 struct Vertex
 {
-    float x, y, z;
+    float16_t x, y, z, w;
     uint8_t nx, ny, nz, nw;
-    float tu, uv;
+    float16_t tu, uv;
 };
 
 layout(binding = 0) readonly buffer Vertices
