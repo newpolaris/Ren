@@ -2,7 +2,7 @@
 #include <windows.h>
 #endif
 
-#include <volk.h>
+#include <common.h>
 
 #define GLFW_INCLUDE_VULKAN
 #include <glfw/glfw3.h>
@@ -28,22 +28,13 @@
 
 #include <objparser.h>
 #include <meshoptimizer.h>
+#include <shaders.h>
+#include <filesystem.h>
+#include <pipeline.h>
 
 const int WIDTH = 1280;
 const int HEIGHT = 960;
 const int MAX_FRAMES_IN_FLIGHT = 2;
-
-#ifndef VK_CECHK
-#define VK_CHECK(call) \
-    do { \
-        VkResult result_ = call; \
-        assert(result_ == VK_SUCCESS); \
-    } while (0)
-#endif
-
-#ifndef ARRAYSIZE
-#define ARRAYSIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
-#endif
 
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_LUNARG_standard_validation"
@@ -317,7 +308,7 @@ private:
         createImageViews();
         createRenderPass();
         createDescriptorSetLayout();
-        createGraphicsPipeline(bMeshShaderSupported);
+        createGraphicsPipelines();
         createFramebuffers();
         createCommandPool();
         createUniformBuffers();
@@ -996,169 +987,31 @@ private:
         }
     }
 
-    VkPipelineLayout createPipelineLayout(VkDevice device, bool bMeshShader)
+
+    void createGraphicsPipelines()
     {
-        std::vector<VkDescriptorSetLayoutBinding> setBindings;
-        if (bMeshShader)
-        {
-            setBindings.resize(2);
-            setBindings[0].binding = 0;
-            setBindings[0].descriptorCount = 1;
-            setBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            setBindings[0].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV;
-            setBindings[1].binding = 1;
-            setBindings[1].descriptorCount = 1;
-            setBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            setBindings[1].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV;
-        }
-        else
-        {
-            setBindings.resize(1);
-            setBindings[0].binding = 0;
-            setBindings[0].descriptorCount = 1;
-            setBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            setBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-        }
-
-        VkDescriptorSetLayoutCreateInfo layoutInfo = {};
-        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layoutInfo.bindingCount = uint32_t(setBindings.size());
-        layoutInfo.pBindings = setBindings.data();
-        layoutInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
-
-        VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
-        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS)
-            throw std::runtime_error("failed to create descriptorSet layout");
-
-        VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
-        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 1;
-        pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
-
-        VkPipelineLayout layout;
-        if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &layout) != VK_SUCCESS)
-            throw std::runtime_error("failed to create pipeline layout!");
-
-        // TODO: is this safe?
-        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
-
-        return layout;
-    }
-
-    void createGraphicsPipeline(bool bMeshSupport) {
         modelLayout = createPipelineLayout(device, false);
 
         auto fragShaderCode = readFile("shaders/04.meshlet/base.frag.spv");
         auto vertShaderCode = readFile("shaders/04.meshlet/base.vert.spv");
-        VkShaderModule meshVS = createShaderModule(vertShaderCode);
-        VkShaderModule meshFS = createShaderModule(fragShaderCode);
+        VkShaderModule meshVS = createShaderModule(device, vertShaderCode);
+        VkShaderModule meshFS = createShaderModule(device, fragShaderCode);
 
         VkPipelineCache pipelineCache = nullptr;
         meshPipeline = createGraphicsPipeline(device, pipelineCache, renderPass, meshVS, meshFS, modelLayout, false);
 
-        if (bMeshSupport)
+        if (bMeshShaderSupported)
         {
             modelLayoutMeshlet = createPipelineLayout(device, true);
             auto meshShaderCode = readFile("shaders/04.meshlet/base.mesh.spv");
             VkPipelineCache pipelineMeshletCache = nullptr;
-            VkShaderModule meshMS = createShaderModule(meshShaderCode);
+            VkShaderModule meshMS = createShaderModule(device, meshShaderCode);
             meshPipelineMeshlet = createGraphicsPipeline(device, pipelineMeshletCache, renderPass, meshMS, meshFS, modelLayoutMeshlet, true);
             vkDestroyShaderModule(device, meshMS, nullptr);
         }
 
         vkDestroyShaderModule(device, meshFS, nullptr);
         vkDestroyShaderModule(device, meshVS, nullptr);
-    }
-
-    VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, VkRenderPass renderPass, VkShaderModule vs, VkShaderModule fs, VkPipelineLayout layout, bool bMeshShader) 
-    {
-        VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
-        vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-        if (bMeshShader)
-            vertShaderStageInfo.stage = VK_SHADER_STAGE_MESH_BIT_NV;
-        vertShaderStageInfo.module = vs;
-        vertShaderStageInfo.pName = "main";
-
-        VkPipelineShaderStageCreateInfo fragShaderStageInfo = {};
-        fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        fragShaderStageInfo.module = fs;
-        fragShaderStageInfo.pName = "main";
-
-        VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
-
-        VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
-        vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-
-        VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
-        inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        inputAssembly.primitiveRestartEnable = VK_FALSE;
-
-        VkPipelineViewportStateCreateInfo viewportState = {};
-        viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-        viewportState.viewportCount = 1;
-        viewportState.scissorCount = 1;
-
-        VkPipelineRasterizationStateCreateInfo rasterizer = {};
-        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-        rasterizer.depthClampEnable = VK_FALSE;
-        rasterizer.rasterizerDiscardEnable = VK_FALSE;
-        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-        rasterizer.lineWidth = 1.0f;
-        rasterizer.cullMode = VK_CULL_MODE_FRONT_BIT;
-        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
-        rasterizer.depthBiasEnable = VK_FALSE;
-
-        VkPipelineMultisampleStateCreateInfo multisampling = {};
-        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-        multisampling.sampleShadingEnable = VK_FALSE;
-        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-        VkPipelineColorBlendAttachmentState colorBlendAttachment = {};
-        colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        colorBlendAttachment.blendEnable = VK_FALSE;
-
-        VkPipelineColorBlendStateCreateInfo colorBlending = {};
-        colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-        colorBlending.logicOpEnable = VK_FALSE;
-        colorBlending.logicOp = VK_LOGIC_OP_COPY; // optional
-        colorBlending.attachmentCount = 1;
-        colorBlending.pAttachments = &colorBlendAttachment;
-        colorBlending.blendConstants[0] = 0.0f;
-        colorBlending.blendConstants[1] = 0.0f;
-        colorBlending.blendConstants[2] = 0.0f;
-        colorBlending.blendConstants[3] = 0.0f;
-
-        VkDynamicState dynamicStates[]  { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-
-        VkPipelineDynamicStateCreateInfo dynamicState = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
-        dynamicState.dynamicStateCount = ARRAYSIZE(dynamicStates);
-        dynamicState.pDynamicStates = dynamicStates;
-
-        VkGraphicsPipelineCreateInfo pipelineInfo = {};
-        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        pipelineInfo.stageCount = 2;
-        pipelineInfo.pStages = shaderStages;
-        pipelineInfo.pVertexInputState = &vertexInputInfo;
-        pipelineInfo.pInputAssemblyState = &inputAssembly;
-        pipelineInfo.pViewportState = &viewportState;
-        pipelineInfo.pRasterizationState = &rasterizer;
-        pipelineInfo.pMultisampleState = &multisampling;
-        pipelineInfo.pColorBlendState = &colorBlending;
-        pipelineInfo.layout = layout;
-        pipelineInfo.renderPass = renderPass;
-        pipelineInfo.subpass = 0;
-        pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
-        pipelineInfo.pDynamicState = &dynamicState;
-
-        VkPipeline graphicsPipeline = nullptr;
-        if (vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create graphics pipeline!");
-        }
-
-        return graphicsPipeline;
     }
 
     VkFramebuffer createFramebuffer(VkDevice device, VkRenderPass renderPass, VkImageView imageView, uint32_t width, uint32_t height)
@@ -1396,20 +1249,6 @@ private:
     {
     }
 
-    VkShaderModule createShaderModule(const std::vector<char>& code) {
-        VkShaderModuleCreateInfo createInfo = {};
-        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        createInfo.codeSize = code.size();
-        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
-
-        VkShaderModule shaderModule;
-        if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create shader module!");
-        }
-
-        return shaderModule;
-    }
-
     VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats)
     {
         if (availableFormats.size() == 1 && availableFormats[0].format == VK_FORMAT_UNDEFINED)
@@ -1637,23 +1476,6 @@ private:
     }
 
 
-    static std::vector<char> readFile(const std::string& filename)
-    {
-        std::ifstream file(filename, std::ios::ate | std::ios::binary);
-
-        if (!file.is_open())
-            throw std::runtime_error("failed to open file!");
-
-        size_t fileSize = (size_t)file.tellg();
-        std::vector<char> buffer(fileSize);
-
-        file.seekg(0);
-        file.read(buffer.data(), fileSize);
-
-        file.close();
-
-        return buffer;
-    }
 
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData) {
         // Validation layers don't correctly detect NonWriteable declarations for storage buffers: https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/73
