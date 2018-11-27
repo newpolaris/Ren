@@ -31,6 +31,7 @@
 #include <shaders.h>
 #include <filesystem.h>
 #include <pipeline.h>
+#include <swapchain.h>
 
 const int WIDTH = 1280;
 const int HEIGHT = 960;
@@ -60,12 +61,6 @@ struct QueueFamilyIndices {
     bool isComplete() {
         return graphicsFamily.has_value() && presentFamily.has_value();
     }
-};
-
-struct SwapChainSupportDetails {
-    VkSurfaceCapabilitiesKHR capabilities;
-    std::vector<VkSurfaceFormatKHR> formats;
-    std::vector<VkPresentModeKHR> presentModes;
 };
 
 
@@ -447,23 +442,8 @@ private:
             {
                 vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshletPipeline);
 
-                VkDescriptorBufferInfo vbInfo = {};
-                vbInfo.buffer = vb.buffer;
-                vbInfo.range = vb.size;
-                vbInfo.offset = 0;
-
-                VkDescriptorBufferInfo mbInfo = {};
-                mbInfo.buffer = mb.buffer;
-                mbInfo.range = mb.size;
-                mbInfo.offset = 0;
-
-                struct Descriptorinfo {
-                    VkDescriptorBufferInfo a, b;
-                } descriptorInfo {
-                    vbInfo, mbInfo
-                };
-
-                vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshletUpdateTemplate, meshletPipelineLayout, 0, &descriptorInfo);
+                DescriptorInfo descriptors[] = { vb.buffer, mb.buffer };
+                vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshletUpdateTemplate, meshletPipelineLayout, 0, descriptors);
                 vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
                 vkCmdDrawMeshTasksNV(commandBuffer, uint32_t(mesh.meshlets.size()), 0);
             }
@@ -471,12 +451,8 @@ private:
             {
                 vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline);
 
-                VkDescriptorBufferInfo vbInfo = {};
-                vbInfo.buffer = vb.buffer;
-                vbInfo.range = vb.size;
-                vbInfo.offset = 0;
-
-                vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshUpdateTemplate, meshPipelineLayout, 0, &vbInfo);
+                DescriptorInfo descriptors[] = { vb.buffer };
+                vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshUpdateTemplate, meshPipelineLayout, 0, descriptors);
                 vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
                 vkCmdDrawIndexed(commandBuffer, uint32_t(mesh.indices.size()), 1, 0, 0, 0);
             }
@@ -787,7 +763,11 @@ private:
     }
 
     void createSwapChain() {
-        SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
+        createSwapChain(physicalDevice, surface);
+    }
+
+    void createSwapChain(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface) {
+        SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice, surface);
 
         VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
         VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
@@ -903,32 +883,34 @@ private:
 
     void createGraphicsPipelines()
     {
-        meshDescriptorLayout = createDescriptorSetLayout(device, false);
-        meshPipelineLayout = createPipelineLayout(device, meshDescriptorLayout, false);
-        meshUpdateTemplate = createDescriptorUpdateTemplate(device, meshDescriptorLayout, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineLayout, false);
-
         auto fragShaderCode = readFile("shaders/04.meshlet/base.frag.spv");
         auto vertShaderCode = readFile("shaders/04.meshlet/base.vert.spv");
-        VkShaderModule meshVS = createShaderModule(device, vertShaderCode);
-        VkShaderModule meshFS = createShaderModule(device, fragShaderCode);
+        Shader meshVS = createShader(device, vertShaderCode);
+        Shader meshFS = createShader(device, fragShaderCode);
+
+        meshDescriptorLayout = createDescriptorSetLayout(device, meshVS, meshFS);
+        meshPipelineLayout = createPipelineLayout(device, meshDescriptorLayout);
+        meshUpdateTemplate = createDescriptorUpdateTemplate(device, meshDescriptorLayout, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineLayout, meshVS, meshFS);
 
         VkPipelineCache pipelineCache = nullptr;
-        meshPipeline = createGraphicsPipeline(device, pipelineCache, renderPass, meshVS, meshFS, meshPipelineLayout, false);
+        meshPipeline = createGraphicsPipeline(device, pipelineCache, renderPass, meshVS, meshFS, meshPipelineLayout);
 
         if (bMeshShaderSupported)
         {
-            meshletDescriptorLayout = createDescriptorSetLayout(device, true);
-            meshletPipelineLayout = createPipelineLayout(device, meshletDescriptorLayout, true);
             auto meshShaderCode = readFile("shaders/04.meshlet/base.mesh.spv");
-            VkPipelineCache pipelineMeshletCache = nullptr;
-            VkShaderModule meshMS = createShaderModule(device, meshShaderCode);
-            meshletPipeline = createGraphicsPipeline(device, pipelineMeshletCache, renderPass, meshMS, meshFS, meshletPipelineLayout, true);
-            meshletUpdateTemplate = createDescriptorUpdateTemplate(device, meshletDescriptorLayout, VK_PIPELINE_BIND_POINT_GRAPHICS, meshletPipelineLayout, true);
-            vkDestroyShaderModule(device, meshMS, nullptr);
-        }
+            Shader meshMS = createShader(device, meshShaderCode);
 
-        vkDestroyShaderModule(device, meshFS, nullptr);
-        vkDestroyShaderModule(device, meshVS, nullptr);
+            meshletDescriptorLayout = createDescriptorSetLayout(device, meshMS, meshFS);
+            meshletPipelineLayout = createPipelineLayout(device, meshletDescriptorLayout);
+            meshletUpdateTemplate = createDescriptorUpdateTemplate(device, meshletDescriptorLayout, VK_PIPELINE_BIND_POINT_GRAPHICS, meshletPipelineLayout, meshMS, meshFS);
+
+            VkPipelineCache pipelineMeshletCache = nullptr;
+            meshletPipeline = createGraphicsPipeline(device, pipelineMeshletCache, renderPass, meshMS, meshFS, meshletPipelineLayout);
+
+            destroyShader(device, meshMS);
+        }
+        destroyShader(device, meshFS);
+        destroyShader(device, meshVS);
     }
 
     VkFramebuffer createFramebuffer(VkDevice device, VkRenderPass renderPass, VkImageView imageView, uint32_t width, uint32_t height)
@@ -1215,31 +1197,6 @@ private:
         }
     }
 
-    SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device) const
-    {
-        SwapChainSupportDetails details;
-
-        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
-
-        uint32_t formatCount;
-        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
-
-        if (formatCount != 0) {
-            details.formats.resize(formatCount);
-            vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
-        }
-
-        uint32_t presentModeCount;
-        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
-
-        if (presentModeCount != 0) {
-            details.presentModes.resize(presentModeCount);
-            vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
-        }
-
-        return details;
-    }
-
     bool isDeviceSuitable(VkPhysicalDevice device) const
     {
         VkPhysicalDeviceProperties deviceProperties = {};
@@ -1253,7 +1210,7 @@ private:
 
         bool swapChainAdequate = false;
         if (extensionsSupported) {
-            SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
+            SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device, surface);
             swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
         }
 

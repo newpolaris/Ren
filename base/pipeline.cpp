@@ -1,19 +1,20 @@
 #include "pipeline.h"
 
-VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, VkRenderPass renderPass, VkShaderModule vs, VkShaderModule fs, VkPipelineLayout layout, bool bMeshShader)
+VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, VkRenderPass renderPass, const Shader& vs, const Shader& fs, VkPipelineLayout layout)
 {
+    assert(vs.stage_ == VK_SHADER_STAGE_VERTEX_BIT || vs.stage_ == VK_SHADER_STAGE_MESH_BIT_NV);
+    assert(fs.stage_ == VK_SHADER_STAGE_FRAGMENT_BIT);
+
     VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
     vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    if (bMeshShader)
-        vertShaderStageInfo.stage = VK_SHADER_STAGE_MESH_BIT_NV;
-    vertShaderStageInfo.module = vs;
+    vertShaderStageInfo.stage = vs.stage_;
+    vertShaderStageInfo.module = vs.module_;
     vertShaderStageInfo.pName = "main";
 
     VkPipelineShaderStageCreateInfo fragShaderStageInfo = {};
     fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    fragShaderStageInfo.module = fs;
+    fragShaderStageInfo.module = fs.module_;
     fragShaderStageInfo.pName = "main";
 
     VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
@@ -91,28 +92,27 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
     return graphicsPipeline;
 }
 
-VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, bool bMeshShader)
+VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, const Shader& vs, const Shader& fs)
 {
     std::vector<VkDescriptorSetLayoutBinding> setBindings;
-    if (bMeshShader)
+
+    uint32_t storage_buffer_mask = vs.storage_buffer_mask_ | fs.storage_buffer_mask_;
+
+    for (uint32_t i = 0; i < 32; i++)
     {
-        setBindings.resize(2);
-        setBindings[0].binding = 0;
-        setBindings[0].descriptorCount = 1;
-        setBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        setBindings[0].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV;
-        setBindings[1].binding = 1;
-        setBindings[1].descriptorCount = 1;
-        setBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        setBindings[1].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV;
-    }
-    else
-    {
-        setBindings.resize(1);
-        setBindings[0].binding = 0;
-        setBindings[0].descriptorCount = 1;
-        setBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        setBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        if (storage_buffer_mask & (1 << i))
+        {
+            VkDescriptorSetLayoutBinding binding = {};
+            binding.binding = i;
+            binding.descriptorCount = 1;
+            binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            if (vs.storage_buffer_mask_ & (1 << i))
+                binding.stageFlags |= vs.storage_buffer_mask_;
+            if (fs.storage_buffer_mask_ & (1 << i))
+                binding.stageFlags |= fs.storage_buffer_mask_;
+
+            setBindings.push_back(binding);
+        }
     }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
@@ -127,7 +127,7 @@ VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, bool bMeshShade
     return descriptorSetLayout;
 }
 
-VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, bool bMeshShader)
+VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout)
 {
     VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;

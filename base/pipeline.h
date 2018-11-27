@@ -1,7 +1,8 @@
 #pragma once
 
 #include "common.h"
+#include "shaders.h"
 
-VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, bool bMeshShader);
-VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, VkRenderPass renderPass, VkShaderModule vs, VkShaderModule fs, VkPipelineLayout layout, bool bMeshShader);
-VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, bool bMeshShader);
+VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, const Shader& vs, const Shader& fs);
+VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, VkRenderPass renderPass, const Shader& vs, const Shader& fs, VkPipelineLayout layout);
+VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout);

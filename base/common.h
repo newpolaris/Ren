@@ -3,6 +3,7 @@
 #include <cassert>
 #include <volk.h>
 #include <vector>
+#include <stdint.h>
 
 #ifndef VK_CECHK
 #define VK_CHECK(call) \
