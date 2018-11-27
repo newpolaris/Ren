@@ -127,8 +127,10 @@ VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, const Shader& v
     return descriptorSetLayout;
 }
 
-VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout)
-{
+VkPipelineLayout createPipelineLayout(VkDevice device, const Shader& vs, const Shader& fs)
+{ 
+    VkDescriptorSetLayout descriptorSetLayout = createDescriptorSetLayout(device, vs, fs);
+
     VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
@@ -137,6 +139,9 @@ VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout des
     VkPipelineLayout layout;
     if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &layout) != VK_SUCCESS)
         throw std::runtime_error("failed to create pipeline layout!");
+
+    // TODO: is this safe?
+    vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
     return layout;
 }
