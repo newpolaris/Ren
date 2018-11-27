@@ -253,8 +253,6 @@ private:
     std::vector<VkFramebuffer> swapChainFramebuffers;
 
     VkRenderPass renderPass;
-    VkDescriptorSetLayout meshDescriptorLayout = VK_NULL_HANDLE;
-    VkDescriptorSetLayout meshletDescriptorLayout = VK_NULL_HANDLE;
     VkPipelineLayout meshPipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout meshletPipelineLayout = VK_NULL_HANDLE;
     VkDescriptorUpdateTemplate meshUpdateTemplate = VK_NULL_HANDLE;
@@ -553,9 +551,6 @@ private:
 
     void cleanup() {
         cleanupSwapChain();
-
-        vkDestroyDescriptorSetLayout(device, meshDescriptorLayout, nullptr);
-        vkDestroyDescriptorSetLayout(device, meshletDescriptorLayout, nullptr);
         vkDestroyPipeline(device, meshPipeline, nullptr);
         vkDestroyPipeline(device, meshletPipeline, nullptr);
         vkDestroyPipelineLayout(device, meshPipelineLayout, nullptr);
@@ -888,9 +883,8 @@ private:
         Shader meshVS = createShader(device, vertShaderCode);
         Shader meshFS = createShader(device, fragShaderCode);
 
-        meshDescriptorLayout = createDescriptorSetLayout(device, meshVS, meshFS);
-        meshPipelineLayout = createPipelineLayout(device, meshDescriptorLayout);
-        meshUpdateTemplate = createDescriptorUpdateTemplate(device, meshDescriptorLayout, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineLayout, meshVS, meshFS);
+        meshPipelineLayout = createPipelineLayout(device, meshVS, meshFS);
+        meshUpdateTemplate = createDescriptorUpdateTemplate(device, nullptr, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineLayout, meshVS, meshFS);
 
         VkPipelineCache pipelineCache = nullptr;
         meshPipeline = createGraphicsPipeline(device, pipelineCache, renderPass, meshVS, meshFS, meshPipelineLayout);
@@ -900,9 +894,8 @@ private:
             auto meshShaderCode = readFile("shaders/04.meshlet/base.mesh.spv");
             Shader meshMS = createShader(device, meshShaderCode);
 
-            meshletDescriptorLayout = createDescriptorSetLayout(device, meshMS, meshFS);
-            meshletPipelineLayout = createPipelineLayout(device, meshletDescriptorLayout);
-            meshletUpdateTemplate = createDescriptorUpdateTemplate(device, meshletDescriptorLayout, VK_PIPELINE_BIND_POINT_GRAPHICS, meshletPipelineLayout, meshMS, meshFS);
+            meshletPipelineLayout = createPipelineLayout(device, meshMS, meshFS);
+            meshletUpdateTemplate = createDescriptorUpdateTemplate(device, nullptr, VK_PIPELINE_BIND_POINT_GRAPHICS, meshletPipelineLayout, meshMS, meshFS);
 
             VkPipelineCache pipelineMeshletCache = nullptr;
             meshletPipeline = createGraphicsPipeline(device, pipelineMeshletCache, renderPass, meshMS, meshFS, meshletPipelineLayout);
