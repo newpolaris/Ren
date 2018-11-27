@@ -107,9 +107,9 @@ VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, const Shader& v
             binding.descriptorCount = 1;
             binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             if (vs.storage_buffer_mask_ & (1 << i))
-                binding.stageFlags |= vs.storage_buffer_mask_;
+                binding.stageFlags |= vs.stage_;
             if (fs.storage_buffer_mask_ & (1 << i))
-                binding.stageFlags |= fs.storage_buffer_mask_;
+                binding.stageFlags |= fs.stage_;
 
             setBindings.push_back(binding);
         }
