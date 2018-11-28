@@ -5,12 +5,30 @@
 
 #include "mesh.h"
 
+#define DEBUG 1
+
 layout(binding = 0) readonly buffer Vertices
 {
     Vertex vertices[];
 };
 
+layout(binding = 1) readonly buffer MeshletIndices
+{
+    uint meshlets[];
+};
+
 layout(location = 0) out vec4 color;
+
+uint hash(uint a)
+{
+   a = (a+0x7ed55d16) + (a<<12);
+   a = (a^0xc761c23c) ^ (a>>19);
+   a = (a+0x165667b1) + (a<<5);
+   a = (a+0xd3a2646c) ^ (a<<9);
+   a = (a+0xfd7046c5) + (a<<3);
+   a = (a^0xb55a4f09) ^ (a>>16);
+   return a;
+}
 
 void main()
 {
@@ -19,4 +37,11 @@ void main()
 
     gl_Position = vec4(position*vec3(0.4, 0.4, 0.1) + vec3(0.0, -0.7, 0.5), 1.0);
     color = vec4(normal * 0.5 + vec3(0.5), 1.0);
+
+#if DEBUG
+    uint mi = meshlets[gl_VertexIndex];
+	uint mhash = hash(mi);
+	color = vec4(vec3(float(mhash & 255), float((mhash >> 8) & 255), float((mhash >> 16) & 255)) / 255.0, 1.0);
+#endif
+
 }

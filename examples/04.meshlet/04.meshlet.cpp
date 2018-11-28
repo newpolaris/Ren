@@ -33,6 +33,9 @@
 #include <pipeline.h>
 #include <swapchain.h>
 
+#include <glm/gtc/type_precision.hpp> //hvec2, i8vec2, i32vec2
+#include "04.meshlet.h"
+
 const int WIDTH = 1280;
 const int HEIGHT = 960;
 const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -72,6 +75,7 @@ struct Vertex {
 
 struct Meshlet
 {
+    float cone[4];
     uint32_t vertices[64];
     uint8_t indices[126*3]; // up to 126 triangles
     uint8_t triangleCount;
@@ -83,7 +87,24 @@ struct Mesh
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     std::vector<Meshlet> meshlets;
+    std::vector<uint32_t> meshletIndices;
+    std::vector<std::pair<uint32_t, uint32_t>> meshletInstances;
 };
+
+float halfToFloat(uint16_t v)
+{
+    uint16_t sign = v >> 15;
+    uint16_t exp = (v >> 10) & 31;
+    uint16_t man = v & 1023;
+
+    assert(exp != 31);
+    if (exp == 0) 
+    {
+        assert(man == 0);
+        return 0.f;
+    }
+    return (sign == 0 ? 1.f : -1.f) * ldexpf(float(man + 1024)/1024.f, exp - 15);
+}
 
 bool loadMesh(Mesh& result, const std::string& path)
 {
@@ -102,9 +123,9 @@ bool loadMesh(Mesh& result, const std::string& path)
             int vti = file.f[i * 3 + 1];
             int vni = file.f[i * 3 + 2];
 
-            float nx = vni < 0 ? 0.f : file.vn[vi * 3 + 0];
-            float ny = vni < 0 ? 0.f : file.vn[vi * 3 + 1];
-            float nz = vni < 0 ? 1.f : file.vn[vi * 3 + 2];
+            float nx = vni < 0 ? 0.f : file.vn[vni * 3 + 0];
+            float ny = vni < 0 ? 0.f : file.vn[vni * 3 + 1];
+            float nz = vni < 0 ? 1.f : file.vn[vni * 3 + 2];
 
             v.vx = meshopt_quantizeHalf(file.v[vi * 3 + 0]);
             v.vy = meshopt_quantizeHalf(file.v[vi * 3 + 1]);
@@ -113,8 +134,8 @@ bool loadMesh(Mesh& result, const std::string& path)
             v.nx = uint8_t(nx * 127.f + 127.f); // TODO: fix rounding
             v.ny = uint8_t(ny * 127.f + 127.f); // TODO: fix rounding
             v.nz = uint8_t(nz * 127.f + 127.f); // TODO: fix rounding
-            v.tu = meshopt_quantizeHalf(vti < 0 ? 0.f : file.vt[vi * 3 + 0]);
-            v.tv = meshopt_quantizeHalf(vti < 0 ? 0.f : file.vt[vi * 3 + 2]);
+            v.tu = meshopt_quantizeHalf(vti < 0 ? 0.f : file.vt[vti * 3 + 0]);
+            v.tv = meshopt_quantizeHalf(vti < 0 ? 0.f : file.vt[vti * 3 + 2]);
         }
 
         if (false)
@@ -171,22 +192,19 @@ void buildMeshlets(Mesh& mesh)
         if (av == 0xff)
         {
             av = meshlet.vertexCount;
-            meshlet.vertices[meshlet.vertexCount] = a;
-            meshlet.vertexCount++;
+            meshlet.vertices[meshlet.vertexCount++] = a;
         }
 
 		if (bv == 0xff)
 		{
 			bv = meshlet.vertexCount;
-			meshlet.vertices[meshlet.vertexCount] = b;
-            meshlet.vertexCount++;
+			meshlet.vertices[meshlet.vertexCount++] = b;
 		}
 
 		if (cv == 0xff)
 		{
 			cv = meshlet.vertexCount;
-			meshlet.vertices[meshlet.vertexCount] = c;
-            meshlet.vertexCount++;
+			meshlet.vertices[meshlet.vertexCount++] = c;
 		}
 
 		meshlet.indices[meshlet.triangleCount * 3 + 0] = av;
@@ -196,6 +214,92 @@ void buildMeshlets(Mesh& mesh)
     }
     if (meshlet.triangleCount)
         mesh.meshlets.push_back(meshlet);
+}
+
+void buildMeshletCones(Mesh& mesh)
+{
+    for (auto& meshlet : mesh.meshlets)
+    {
+        std::vector<float[3]> normals(126);
+
+        for (uint16_t i = 0; i < meshlet.triangleCount; i++)
+        {
+            uint8_t a = meshlet.indices[i*3 + 0];
+            uint8_t b = meshlet.indices[i*3 + 1];
+            uint8_t c = meshlet.indices[i*3 + 2];
+
+            const auto& va = mesh.vertices[meshlet.vertices[a]];
+            const auto& vb = mesh.vertices[meshlet.vertices[b]];
+            const auto& vc = mesh.vertices[meshlet.vertices[c]];
+
+            float p0[3] = { halfToFloat(va.vx), halfToFloat(va.vy), halfToFloat(va.vz) };
+            float p1[3] = { halfToFloat(vb.vx), halfToFloat(vb.vy), halfToFloat(vb.vz) };
+            float p2[3] = { halfToFloat(vc.vx), halfToFloat(vc.vy), halfToFloat(vc.vz) };
+
+            float p10[3] = { p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2] };
+            float p20[3] = { p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2] };
+
+            // p10 x p20
+            float normalx = p10[1]*p20[2] - p10[2]*p20[1];
+            float normaly = p10[2]*p20[0] - p10[0]*p20[2];
+            float normalz = p10[0]*p20[1] - p10[1]*p20[0];
+
+            float area = sqrtf(normalx*normalx + normaly*normaly + normalz*normalz);
+            float invarea = area == 0.f ? 0.f : 1.f / area;
+
+            normals[i][0] = normalx * invarea;
+            normals[i][1] = normaly * invarea;
+            normals[i][2] = normalz * invarea;
+        }
+
+        float normal[4] = {};
+        for (uint8_t i = 0; i < meshlet.triangleCount; i++)
+            for (int t = 0; t < 3; t++)
+                normal[t] += normals[i][t];
+
+        for (int t = 0; t < 3; t++)
+            normal[t] /= meshlet.triangleCount;
+
+        float length = sqrtf(normal[0]*normal[0] + normal[1]*normal[1] + normal[2]*normal[2]);
+        if (length <= 0.f)
+        {
+            normal[0] = 1.f;
+            normal[1] = 0.f;
+            normal[2] = 0.f;
+            normal[3] = 0.f;
+        }
+        else
+        {
+            float inverseLength = 1.f / length;
+            for (int t = 0; t < 3; t++)
+                normal[t] *= inverseLength;
+
+            float mindp = 1.f;
+            for (uint8_t i = 0; i < meshlet.triangleCount; i++)
+            {
+                float dp = 0.f;
+                for (int t = 0; t < 3; t++)
+                    dp += normals[i][t]*normal[t];
+                mindp = glm::min(mindp, dp);
+            }
+            normal[3] = mindp;
+        }
+        for (int t = 0; t < 4; t++)
+            meshlet.cone[t] = normal[t];
+    }
+}
+
+void buildMeshletIndices(Mesh& mesh)
+{
+    std::vector<uint32_t> meshletIndices(mesh.vertices.size());
+
+    const auto& meshlet = mesh.meshlets;
+    for (size_t i = 0; i < meshlet.size(); i++)
+    {
+        for (auto& id : meshlet[i].vertices)
+            meshletIndices[id] = uint32_t(i);
+    }
+    mesh.meshletIndices = meshletIndices;
 }
 
 struct Buffer
@@ -348,6 +452,8 @@ private:
         assert(rcm);
 
         buildMeshlets(mesh);
+        buildMeshletCones(mesh);
+        buildMeshletIndices(mesh);
 
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
@@ -360,10 +466,13 @@ private:
         createBuffer(ib, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         Buffer mb = {};
         createBuffer(mb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        Buffer mib = {};
+        createBuffer(mib, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, vb, scratch, mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, ib, scratch, mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, mb, scratch, mesh.meshlets.data(), mesh.meshlets.size() * sizeof(Meshlet));
+        uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, mib, scratch, mesh.meshletIndices.data(), mesh.meshletIndices.size() * sizeof(uint32_t));
 
         VkQueryPool queryPool = createQueryPool(device, 128);
 
@@ -449,7 +558,7 @@ private:
             {
                 vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline);
 
-                DescriptorInfo descriptors[] = { vb.buffer };
+                DescriptorInfo descriptors[] = { vb.buffer, mib.buffer };
                 vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshUpdateTemplate, meshPipelineLayout, 0, descriptors);
                 vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
                 vkCmdDrawIndexed(commandBuffer, uint32_t(mesh.indices.size()), 1, 0, 0, 0);
@@ -534,6 +643,7 @@ private:
         destroyBuffer(vb, device);
         destroyBuffer(ib, device);
         destroyBuffer(mb, device);
+        destroyBuffer(mib, device);
         destroyBuffer(scratch, device);
     }
 

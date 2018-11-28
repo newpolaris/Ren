@@ -10,17 +10,21 @@
 1:02:32 - Test push descriptor with position * 1e-9. 1.9 ms > 1.0 ms. 레스터한것과 안한것의 결과가 2배정도면 거의 optimzal 로 본다. 5 ~ 10 billion 이 결과 예상값이고 5 정도 나오면 그 결과에 만족할 수 있음.
 1:04:20 - N triangle > n/2 vertices (minecraft 같은건 nx2)
           upto 128 and one is used by gl_primitiveCountNV (so, 127) and makes divided by 3. up to 42 triangles
-1:09:12 - 16 KB / meshlet > 64 vertices > 16 * 1024 / 64 > 256 byte per vertex
-          128 byte chuck (-4 bytes for count, 1 byte per index (so limited to 256))
+1:09:12 - vertex data: 16 KB / meshlet & 64 vertices > 16 * 1024 / 64 > 256 byte per vertex
+          index data: 128 byte chuck (4 bytes for count of primitive) and 1 byte per index (so limited to 2^8 = 256))
           if use 128x3 then (128x3 - 4) index > 126 triangles
           if use 128x2 then (128x2 - 4) index >  84 triangles
           if use 128x1 then (128x1 - 4) index >  41 triangles (ndivia article은 40이라 말함; introduction to utrning mehs shader)
 
-1:39:12 - perprimitiveNV
+1:39:12 - perprimitiveNV 로 primitive 별 vec3 등을 넘길 수 있다.
 2:10:15 - ACMR ratio (average cache miss ratio)  = # of vertex shader invocation / # of triangles         
           0.5 best case
-          0.7 
+          0.7 game mesh ~ 1.5 light map terribly packed
           2.0 minecraft like
+2:14:48 - Nvidia fixed function rasterization pipleline at least 1080 not 2080 necessily, 
+          as having 32 vertices meshlet. Gpu accumulate wraps upto 32 vertices. cont.
+          32 = acmr 0.75
+          64 = acmr 0.65
 
 
 
