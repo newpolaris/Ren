@@ -9,7 +9,6 @@
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#define GLM_FORCE_LEFT_HANDED
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -65,7 +64,6 @@ struct QueueFamilyIndices {
         return graphicsFamily.has_value() && presentFamily.has_value();
     }
 };
-
 
 struct Vertex {
     uint16_t vx, vy, vz, vw;
@@ -239,7 +237,7 @@ void buildMeshletCones(Mesh& mesh)
             float p10[3] = { p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2] };
             float p20[3] = { p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2] };
 
-            // p10 x p20
+            // cross(p10, p20)
             float normalx = p10[1]*p20[2] - p10[2]*p20[1];
             float normaly = p10[2]*p20[0] - p10[0]*p20[2];
             float normalz = p10[0]*p20[1] - p10[1]*p20[0];
@@ -266,7 +264,7 @@ void buildMeshletCones(Mesh& mesh)
             normal[0] = 1.f;
             normal[1] = 0.f;
             normal[2] = 0.f;
-            normal[3] = 0.f;
+            normal[3] = 1.f;
         }
         else
         {
@@ -282,7 +280,7 @@ void buildMeshletCones(Mesh& mesh)
                     dp += normals[i][t]*normal[t];
                 mindp = glm::min(mindp, dp);
             }
-            normal[3] = mindp;
+            normal[3] = mindp <= 0.f ? 1 : sqrtf(1 - mindp * mindp);
         }
         for (int t = 0; t < 4; t++)
             meshlet.cone[t] = normal[t];
@@ -291,15 +289,24 @@ void buildMeshletCones(Mesh& mesh)
 
 void buildMeshletIndices(Mesh& mesh)
 {
-    std::vector<uint32_t> meshletIndices(mesh.vertices.size());
-
-    const auto& meshlet = mesh.meshlets;
-    for (size_t i = 0; i < meshlet.size(); i++)
+    uint32_t cnt = 0;
+    std::vector<uint32_t> meshletIndices(mesh.indices.size());
+    for (const auto& meshlet : mesh.meshlets)
     {
-        for (auto& id : meshlet[i].vertices)
-            meshletIndices[id] = uint32_t(i);
+        uint32_t start = cnt;
+        for (uint32_t k = 0; k < uint32_t(meshlet.triangleCount)*3; k++)
+            meshletIndices[cnt++] = meshlet.vertices[meshlet.indices[k]];
+        mesh.meshletInstances.push_back({ start, cnt - start });
     }
     mesh.meshletIndices = meshletIndices;
+
+    size_t culled = 0;
+    for (Meshlet& meshlet : mesh.meshlets)
+        if (meshlet.cone[2] > meshlet.cone[3])
+            culled++;
+#if _DEBUG
+    printf("Culled meshlets: %d/%d\n", int(culled), int(mesh.meshlets.size()));
+#endif
 }
 
 struct Buffer
@@ -455,8 +462,6 @@ private:
         buildMeshletCones(mesh);
         buildMeshletIndices(mesh);
 
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-
         Buffer scratch = {};
         createBuffer(scratch, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
@@ -467,7 +472,7 @@ private:
         Buffer mb = {};
         createBuffer(mb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         Buffer mib = {};
-        createBuffer(mib, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        createBuffer(mib, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, vb, scratch, mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, ib, scratch, mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
@@ -557,11 +562,28 @@ private:
             else
             {
                 vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline);
-
-                DescriptorInfo descriptors[] = { vb.buffer, mib.buffer };
+                DescriptorInfo descriptors[] = { vb.buffer };
                 vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshUpdateTemplate, meshPipelineLayout, 0, descriptors);
+
+            #if 0
                 vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(commandBuffer, uint32_t(mesh.indices.size()), 1, 0, 0, 0);
+                for (int i = 0; i < 5; i++)
+                    vkCmdDrawIndexed(commandBuffer, uint32_t(mesh.indices.size()), 1, 0, 0, 0);
+            #else
+                vkCmdBindIndexBuffer(commandBuffer, mib.buffer, 0, VK_INDEX_TYPE_UINT32);
+                for (int i = 0; i < 5; i++)
+                {
+                    for (size_t k = 0; k < mesh.meshletInstances.size(); k++)
+                    {
+                        auto inst = mesh.meshletInstances[k];
+                        auto cone = mesh.meshlets[k].cone;
+                        auto cosangle = glm::dot(glm::vec3(cone[0], cone[1], cone[2]), glm::vec3(0, 0, 1));
+                        if (cone[3] < cosangle)
+                            continue;
+                        vkCmdDrawIndexed(commandBuffer, uint32_t(inst.second), 1, uint32_t(inst.first), 0, uint32_t(k));
+                    }
+                }
+            #endif
             }
 
             vkCmdEndRenderPass(commandBuffer);

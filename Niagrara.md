@@ -36,6 +36,8 @@ PUSH :   2.67          3.8                1.25                     0.91
 
 
 
+4.37 ms / 5.75
+
 Worklist:
 
 * FVF (fixed function vertex fuction)

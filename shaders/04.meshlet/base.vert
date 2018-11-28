@@ -5,16 +5,11 @@
 
 #include "mesh.h"
 
-#define DEBUG 1
+#define DEBUG 0
 
 layout(binding = 0) readonly buffer Vertices
 {
     Vertex vertices[];
-};
-
-layout(binding = 1) readonly buffer MeshletIndices
-{
-    uint meshlets[];
 };
 
 layout(location = 0) out vec4 color;
@@ -39,7 +34,7 @@ void main()
     color = vec4(normal * 0.5 + vec3(0.5), 1.0);
 
 #if DEBUG
-    uint mi = meshlets[gl_VertexIndex];
+    uint mi = gl_InstanceIndex;
 	uint mhash = hash(mi);
 	color = vec4(vec3(float(mhash & 255), float((mhash >> 8) & 255), float((mhash >> 16) & 255)) / 255.0, 1.0);
 #endif
