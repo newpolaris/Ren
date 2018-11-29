@@ -46,14 +46,21 @@ FVF  :   2.54          1.0                0.84                     0.84
 PUSH :   2.67          3.8                1.25                     0.91
 
 
-- indirect drawing testing with CPU Culling
+- indirect drawing testing with CPU Culling on cluster meshlet
 
 run x5 
 
-PUSH    / Draw    / Indirect
-4.37 ms / 5.75 ms / 5.39 ms
+Single  / Multiple / Indirect
+4.37 ms / 5.75 ms  / 5.39 ms (1)
+5.77 ms / 5.55 ms  / 5.40 ms (2)
 
+(1) 메쉬렛 생성의 고정 상수 및 몇개 구문 바꾸기 전 (멀 잘못 고친 버그 요인이라 생각)
+(2) 뭘 바ㅤㄲㅝㅅ는데 그다음부터 이와 같은 결과가 나옴
 
+문제는 vertex/fragment의 작업이 지나치게 단순하다는 것과 
+multiple indirect 의 성능이 더 낮거나 유사하다는 것
+그리고 scene 자체가 너무 단순히 가운데 객체가 있다는 것
+64개의 버텍스가 옵티멀이 아닐 수 있다는 점. (1) 테스트 할 때는 128 부터가 가장 best 였으나 (2) 에서는 64가 최적;
 
 
 Worklist:

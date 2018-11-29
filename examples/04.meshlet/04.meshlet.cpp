@@ -587,26 +587,10 @@ private:
 
             #if 0
                 vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
-                for (int i = 0; i < 5; i++)
-                    vkCmdDrawIndexed(commandBuffer, uint32_t(mesh.indices.size()), 1, 0, 0, 0);
-            #elif 0
-                vkCmdBindIndexBuffer(commandBuffer, mib.buffer, 0, VK_INDEX_TYPE_UINT32);
-                for (int i = 0; i < 5; i++)
-                {
-                    for (size_t k = 0; k < mesh.meshletInstances.size(); k++)
-                    {
-                        auto inst = mesh.meshletInstances[k];
-                        auto cone = mesh.meshlets[k].cone;
-                        auto cosangle = glm::dot(glm::vec3(cone[0], cone[1], cone[2]), glm::vec3(0, 0, 1));
-                        if (cone[3] < cosangle)
-                            continue;
-                        vkCmdDrawIndexed(commandBuffer, uint32_t(inst.second), 1, uint32_t(inst.first), 0, uint32_t(k));
-                    }
-                }
+                vkCmdDrawIndexed(commandBuffer, uint32_t(mesh.indices.size()), 1, 0, 0, 0);
             #else
                 vkCmdBindIndexBuffer(commandBuffer, mib.buffer, 0, VK_INDEX_TYPE_UINT32);
-                for (int i = 0; i < 5; i++)
-                    vkCmdDrawIndexedIndirect(commandBuffer, cb.buffer, 0, indirectDrawCount, sizeof(VkDrawIndexedIndirectCommand));
+                vkCmdDrawIndexedIndirect(commandBuffer, cb.buffer, 0, indirectDrawCount, sizeof(VkDrawIndexedIndirectCommand));
             #endif
             }
 
