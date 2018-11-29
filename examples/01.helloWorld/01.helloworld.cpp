@@ -619,7 +619,7 @@ private:
         createInfo.subresourceRange.baseArrayLayer = 0;
         createInfo.subresourceRange.layerCount = 1;
 
-        VkImageView imageView = nullptr;
+        VkImageView imageView = VK_NULL_HANDLE;
         if (vkCreateImageView(device, &createInfo, nullptr, &imageView) != VK_SUCCESS) {
             throw std::runtime_error("failed to create image views!");
         }
@@ -751,7 +751,7 @@ private:
         VkShaderModule triangleVS = createShaderModule(vertShaderCode);
         VkShaderModule triangleFS = createShaderModule(fragShaderCode);
 
-        VkPipelineCache pipelineCache = nullptr;
+        VkPipelineCache pipelineCache = VK_NULL_HANDLE;
         trianglePipeline = createGraphicsPipeline(device, pipelineCache, renderPass, triangleVS, triangleFS, triangleLayout);
         assert(trianglePipeline);
 
@@ -847,7 +847,7 @@ private:
         pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
         pipelineInfo.pDynamicState = &dynamicState;
 
-        VkPipeline graphicsPipeline = nullptr;
+        VkPipeline graphicsPipeline = VK_NULL_HANDLE;
         if (vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
             throw std::runtime_error("failed to create graphics pipeline!");
         }
@@ -866,7 +866,7 @@ private:
         framebufferInfo.height = height;
         framebufferInfo.layers = 1;
 
-        VkFramebuffer framebuffer = nullptr;
+        VkFramebuffer framebuffer = VK_NULL_HANDLE;
         if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &framebuffer) != VK_SUCCESS)
             throw std::runtime_error("failed to create framebuffer!");
         return framebuffer;

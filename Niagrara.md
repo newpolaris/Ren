@@ -1,4 +1,13 @@
-> Optimize mesh rendering
+> Memory Type
+
+VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT - near GPU, fastest
+VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT - access from CPU write even read
+VK_MEMORY_PROPERTY_HOST_COHERENT_BIT - whenever we do write from a CPU memory and then submit
+                                       a comment to the gpu in a command buffer,
+                                       you don't need to do extra operations to make sure this memory is like visible
+VK_MEMORY_PROPERTY_HOST_CACHED_BIT - gpu fills buffer and you want to read that 
+
+> 'Optimize mesh rendering'
 
 0:03:00 - triangle 1087474 in 2.3ms result is not fast, because envrionment is RTX 2080
 0:08:57 - test present mode immediate, disable V-sync
@@ -30,17 +39,23 @@
 
 happy_buddha, Nvidia 660m, one commandbuffer with wait-idle
 
+- FVF vs PUSH descriptor
+
         'basic' 'duplicate remove' 'optimize vertex fetch' 'reduce vertex size'
 FVF  :   2.54          1.0                0.84                     0.84
 PUSH :   2.67          3.8                1.25                     0.91
 
 
+- indirect drawing testing with CPU Culling
 
-4.37 ms / 5.75
+run x5 
+
+PUSH    / Draw    / Indirect
+4.37 ms / 5.75 ms / 5.39 ms
+
+
+
 
 Worklist:
 
-* FVF (fixed function vertex fuction)
 * Device Local Memory
-
-

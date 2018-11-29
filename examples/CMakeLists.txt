@@ -14,10 +14,12 @@ function(buildExample EXAMPLE_NAME)
     if(EXISTS ${EXAMPLE_FOLDER}/main.cpp)
         SET(MAIN_CPP ${EXAMPLE_FOLDER}/main.cpp)
     ENDIF()
+
 	# Add shaders
     SET(SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../shaders/${EXAMPLE_NAME}")
+    file(GLOB SHADER_HEADERS "${SHADER_DIR}/*.h")
 	file(GLOB SHADERS "${SHADER_DIR}/*.vert" "${SHADER_DIR}/*.frag" "${SHADER_DIR}/*.comp" "${SHADER_DIR}/*.geom" "${SHADER_DIR}/*.tesc" "${SHADER_DIR}/*.tese" "${SHADER_DIR}/*.mesh")
-    source_group("Shaders" FILES ${SHADERS})
+    source_group("Shaders" FILES ${SHADERS} ${SHADER_HEADERS})
 
     foreach(GLSL ${SHADERS})
         get_filename_component(FILE_NAME ${GLSL} NAME)
@@ -26,7 +28,7 @@ function(buildExample EXAMPLE_NAME)
             OUTPUT ${SPIRV}
             COMMAND ${CMAKE_COMMAND} -E make_directory "${SHADER_DIR}"
             COMMAND ${GLSL_VALIDATOR} -V ${GLSL} -o ${SPIRV}
-            DEPENDS ${GLSL})
+            DEPENDS ${GLSL} ${SHADER_HEADERS})
         list(APPEND SPIRV_BINARY_FILES ${SPIRV})
     endforeach(GLSL)
 
@@ -34,7 +36,7 @@ function(buildExample EXAMPLE_NAME)
     add_custom_target(${EXAMPLE_RESOURCE} DEPENDS ${SPIRV_BINARY_FILES})
 
     if(WIN32)
-        add_executable(${EXAMPLE_NAME} ${MAIN_CPP} ${SOURCE} ${SHADERS})
+        add_executable(${EXAMPLE_NAME} ${MAIN_CPP} ${SOURCE} ${SHADERS} ${SHADER_HEADERS})
         target_link_libraries(${EXAMPLE_NAME} base meshoptimizer volk ${Vulkan_LIBRARY} ${ASSIMP_LIBRARIES} ${WINLIBS} glfw ${GLFW_LIBRARIES})
     else(WIN32)
         add_executable(${EXAMPLE_NAME} ${MAIN_CPP} ${SOURCE} ${SHADERS})

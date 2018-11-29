@@ -32,9 +32,6 @@
 #include <pipeline.h>
 #include <swapchain.h>
 
-#include <glm/gtc/type_precision.hpp> //hvec2, i8vec2, i32vec2
-#include "04.meshlet.h"
-
 const int WIDTH = 1280;
 const int HEIGHT = 960;
 const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -71,11 +68,14 @@ struct Vertex {
     uint16_t tu, tv;
 };
 
-struct Meshlet
+enum { kMeshletVertices = 64 };
+enum { kMeshletTri = 126 };
+
+struct alignas(16) Meshlet
 {
     float cone[4];
-    uint32_t vertices[64];
-    uint8_t indices[126*3]; // up to 126 triangles
+    uint32_t vertices[kMeshletVertices];
+    uint8_t indices[kMeshletTri*3]; // up to 126 triangles
     uint8_t triangleCount;
     uint8_t vertexCount;
 };
@@ -174,11 +174,11 @@ void buildMeshlets(Mesh& mesh)
         unsigned int b = mesh.indices[i + 1];
         unsigned int c = mesh.indices[i + 2];
 
-        uint8_t& av = meshletVertices[a];
-        uint8_t& bv = meshletVertices[b];
-        uint8_t& cv = meshletVertices[c];
+        auto& av = meshletVertices[a];
+        auto& bv = meshletVertices[b];
+        auto& cv = meshletVertices[c];
 
-        if (meshlet.vertexCount + (av == 0xff) + (bv == 0xff) + (cv == 0xff) > 64 || meshlet.triangleCount >= 126)
+        if (meshlet.vertexCount + (av == 0xff) + (bv == 0xff) + (cv == 0xff) > kMeshletVertices || meshlet.triangleCount >= kMeshletTri)
         {
             mesh.meshlets.push_back(meshlet);
 
@@ -218,13 +218,13 @@ void buildMeshletCones(Mesh& mesh)
 {
     for (auto& meshlet : mesh.meshlets)
     {
-        std::vector<float[3]> normals(126);
+        std::vector<float[3]> normals(kMeshletTri);
 
         for (uint16_t i = 0; i < meshlet.triangleCount; i++)
         {
-            uint8_t a = meshlet.indices[i*3 + 0];
-            uint8_t b = meshlet.indices[i*3 + 1];
-            uint8_t c = meshlet.indices[i*3 + 2];
+            auto a = meshlet.indices[i*3 + 0];
+            auto b = meshlet.indices[i*3 + 1];
+            auto c = meshlet.indices[i*3 + 2];
 
             const auto& va = mesh.vertices[meshlet.vertices[a]];
             const auto& vb = mesh.vertices[meshlet.vertices[b]];
@@ -251,7 +251,7 @@ void buildMeshletCones(Mesh& mesh)
         }
 
         float normal[4] = {};
-        for (uint8_t i = 0; i < meshlet.triangleCount; i++)
+        for (int i = 0; i < meshlet.triangleCount; i++)
             for (int t = 0; t < 3; t++)
                 normal[t] += normals[i][t];
 
@@ -273,7 +273,7 @@ void buildMeshletCones(Mesh& mesh)
                 normal[t] *= inverseLength;
 
             float mindp = 1.f;
-            for (uint8_t i = 0; i < meshlet.triangleCount; i++)
+            for (int i = 0; i < meshlet.triangleCount; i++)
             {
                 float dp = 0.f;
                 for (int t = 0; t < 3; t++)
@@ -462,6 +462,26 @@ private:
         buildMeshletCones(mesh);
         buildMeshletIndices(mesh);
 
+        std::vector<VkDrawIndexedIndirectCommand> indirectCommands;
+
+        // Create on indirect command for each mesh in the scene
+		for (size_t i = 0; i < mesh.meshletInstances.size(); i++)
+		{
+            auto cone = mesh.meshlets[i].cone;
+            auto cosangle = glm::dot(glm::vec3(cone[0], cone[1], cone[2]), glm::vec3(0, 0, 1));
+            if (cone[3] < cosangle)
+                continue;
+
+			VkDrawIndexedIndirectCommand indirectCmd {};
+			indirectCmd.instanceCount = 1;
+			indirectCmd.firstInstance = uint32_t(i);
+			indirectCmd.firstIndex = mesh.meshletInstances[i].first;
+			indirectCmd.indexCount = mesh.meshletInstances[i].second;
+			
+			indirectCommands.push_back(indirectCmd);
+		}
+        uint32_t indirectDrawCount = uint32_t(indirectCommands.size());
+
         Buffer scratch = {};
         createBuffer(scratch, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
@@ -473,11 +493,14 @@ private:
         createBuffer(mb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         Buffer mib = {};
         createBuffer(mib, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        Buffer cb = {};
+        createBuffer(cb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, vb, scratch, mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, ib, scratch, mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, mb, scratch, mesh.meshlets.data(), mesh.meshlets.size() * sizeof(Meshlet));
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, mib, scratch, mesh.meshletIndices.data(), mesh.meshletIndices.size() * sizeof(uint32_t));
+        uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, cb, scratch, indirectCommands.data(), indirectCommands.size() * sizeof(VkDrawIndexedIndirectCommand));
 
         VkQueryPool queryPool = createQueryPool(device, 128);
 
@@ -535,13 +558,10 @@ private:
 
             vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-            VkViewport viewport = {};
-            viewport.x = 0.0f;
-            viewport.y = 0.0f;
-            viewport.width = (float)swapChainExtent.width;
-            viewport.height = (float)swapChainExtent.height;
-            viewport.minDepth = 0.0f;
-            viewport.maxDepth = 1.0f;
+            VkViewport viewport = {
+                0, float(swapChainExtent.height),
+                float(swapChainExtent.width), -float(swapChainExtent.height),
+                0.f, 1.f };
 
             VkRect2D scissor = {};
             scissor.offset = {0, 0};
@@ -569,7 +589,7 @@ private:
                 vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
                 for (int i = 0; i < 5; i++)
                     vkCmdDrawIndexed(commandBuffer, uint32_t(mesh.indices.size()), 1, 0, 0, 0);
-            #else
+            #elif 0
                 vkCmdBindIndexBuffer(commandBuffer, mib.buffer, 0, VK_INDEX_TYPE_UINT32);
                 for (int i = 0; i < 5; i++)
                 {
@@ -583,6 +603,10 @@ private:
                         vkCmdDrawIndexed(commandBuffer, uint32_t(inst.second), 1, uint32_t(inst.first), 0, uint32_t(k));
                     }
                 }
+            #else
+                vkCmdBindIndexBuffer(commandBuffer, mib.buffer, 0, VK_INDEX_TYPE_UINT32);
+                for (int i = 0; i < 5; i++)
+                    vkCmdDrawIndexedIndirect(commandBuffer, cb.buffer, 0, indirectDrawCount, sizeof(VkDrawIndexedIndirectCommand));
             #endif
             }
 
@@ -666,6 +690,7 @@ private:
         destroyBuffer(ib, device);
         destroyBuffer(mb, device);
         destroyBuffer(mib, device);
+        destroyBuffer(cb, device);
         destroyBuffer(scratch, device);
     }
 
@@ -841,8 +866,8 @@ private:
                 bMeshShaderSupported = true;
                 break;
         }
-
         VkPhysicalDeviceFeatures2 features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+        features.features.multiDrawIndirect = true;
 
         VkPhysicalDevice8BitStorageFeaturesKHR features8 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES_KHR };
         features8.storageBuffer8BitAccess = true;
@@ -852,7 +877,7 @@ private:
         features16.storageBuffer16BitAccess = true;
         features16.uniformAndStorageBuffer16BitAccess = true;
 
-        VkPhysicalDeviceMeshShaderFeaturesNV featuresMesh =  { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_NV };
+        VkPhysicalDeviceMeshShaderFeaturesNV featuresMesh = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_NV };
         featuresMesh.meshShader = true;
 
         VkDeviceCreateInfo createInfo = {};
@@ -963,7 +988,7 @@ private:
         createInfo.subresourceRange.baseArrayLayer = 0;
         createInfo.subresourceRange.layerCount = 1;
 
-        VkImageView imageView = nullptr;
+        VkImageView imageView = VK_NULL_HANDLE;
         if (vkCreateImageView(device, &createInfo, nullptr, &imageView) != VK_SUCCESS) {
             throw std::runtime_error("failed to create image views!");
         }
@@ -1016,9 +1041,9 @@ private:
         Shader meshFS = createShader(device, fragShaderCode);
 
         meshPipelineLayout = createPipelineLayout(device, meshVS, meshFS);
-        meshUpdateTemplate = createDescriptorUpdateTemplate(device, nullptr, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineLayout, meshVS, meshFS);
+        meshUpdateTemplate = createDescriptorUpdateTemplate(device, VK_NULL_HANDLE, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineLayout, meshVS, meshFS);
 
-        VkPipelineCache pipelineCache = nullptr;
+        VkPipelineCache pipelineCache = VK_NULL_HANDLE;
         meshPipeline = createGraphicsPipeline(device, pipelineCache, renderPass, meshVS, meshFS, meshPipelineLayout);
 
         if (bMeshShaderSupported)
@@ -1027,9 +1052,9 @@ private:
             Shader meshMS = createShader(device, meshShaderCode);
 
             meshletPipelineLayout = createPipelineLayout(device, meshMS, meshFS);
-            meshletUpdateTemplate = createDescriptorUpdateTemplate(device, nullptr, VK_PIPELINE_BIND_POINT_GRAPHICS, meshletPipelineLayout, meshMS, meshFS);
+            meshletUpdateTemplate = createDescriptorUpdateTemplate(device, VK_NULL_HANDLE, VK_PIPELINE_BIND_POINT_GRAPHICS, meshletPipelineLayout, meshMS, meshFS);
 
-            VkPipelineCache pipelineMeshletCache = nullptr;
+            VkPipelineCache pipelineMeshletCache = VK_NULL_HANDLE;
             meshletPipeline = createGraphicsPipeline(device, pipelineMeshletCache, renderPass, meshMS, meshFS, meshletPipelineLayout);
 
             destroyShader(device, meshMS);
@@ -1049,7 +1074,7 @@ private:
         framebufferInfo.height = height;
         framebufferInfo.layers = 1;
 
-        VkFramebuffer framebuffer = nullptr;
+        VkFramebuffer framebuffer = VK_NULL_HANDLE;
         if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &framebuffer) != VK_SUCCESS)
             throw std::runtime_error("failed to create framebuffer!");
         return framebuffer;
@@ -1205,10 +1230,6 @@ private:
         }
     }
 
-    // VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT - near GPU, fastest
-    // VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT - access from CPU write even read
-    // VK_MEMORY_PROPERTY_HOST_COHERENT_BIT - whenevenr we do write from a CPU memory and then submit a comment to the gpu in a command buffer, you don't need to do extra operations to make sure this memory is like visible
-    // VK_MEMORY_PROPERTY_HOST_CACHED_BIT - gpu fills buffer and you want to read that 
     uint32_t selectMemoryType(const VkPhysicalDeviceMemoryProperties& memoryProperties, uint32_t memoryTypeBits, VkMemoryPropertyFlags flags)
     {
         for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++)
