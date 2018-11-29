@@ -208,12 +208,14 @@ void parseShader(Shader& shader, const char* data, size_t size)
     }
 }
 
-VkDescriptorUpdateTemplate createDescriptorUpdateTemplate(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, VkPipelineBindPoint pipelineBindPoint, VkPipelineLayout layout, const Shader& vs, const Shader& fs)
+VkDescriptorUpdateTemplate createDescriptorUpdateTemplate(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, VkPipelineBindPoint pipelineBindPoint, VkPipelineLayout layout, Shaders shaders)
 {
     std::vector<VkDescriptorUpdateTemplateEntry> entries;
 
-    uint32_t storageBufferMask = vs.storage_buffer_mask_ | fs.storage_buffer_mask_;
-
+    uint32_t storageBufferMask = 0;
+    for (auto shader : shaders)
+        storageBufferMask |= shader->storage_buffer_mask_;
+    
     for (uint32_t i = 0; i < 32; ++i)
     {
         if (storageBufferMask & (1 << i))

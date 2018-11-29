@@ -92,11 +92,13 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
     return graphicsPipeline;
 }
 
-VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, const Shader& vs, const Shader& fs)
+VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, Shaders shaders)
 {
     std::vector<VkDescriptorSetLayoutBinding> setBindings;
 
-    uint32_t storage_buffer_mask = vs.storage_buffer_mask_ | fs.storage_buffer_mask_;
+    uint32_t storage_buffer_mask = 0;
+    for (auto shader : shaders)
+        storage_buffer_mask |= shader->storage_buffer_mask_;
 
     for (uint32_t i = 0; i < 32; i++)
     {
@@ -106,11 +108,9 @@ VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, const Shader& v
             binding.binding = i;
             binding.descriptorCount = 1;
             binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            if (vs.storage_buffer_mask_ & (1 << i))
-                binding.stageFlags |= vs.stage_;
-            if (fs.storage_buffer_mask_ & (1 << i))
-                binding.stageFlags |= fs.stage_;
-
+            for (auto shader : shaders)
+                if (shader->storage_buffer_mask_ & (1 << i))
+                    binding.stageFlags |= shader->stage_;
             setBindings.push_back(binding);
         }
     }
@@ -127,9 +127,9 @@ VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, const Shader& v
     return descriptorSetLayout;
 }
 
-VkPipelineLayout createPipelineLayout(VkDevice device, const Shader& vs, const Shader& fs)
+VkPipelineLayout createPipelineLayout(VkDevice device, Shaders shader)
 { 
-    VkDescriptorSetLayout descriptorSetLayout = createDescriptorSetLayout(device, vs, fs);
+    VkDescriptorSetLayout descriptorSetLayout = createDescriptorSetLayout(device, shader);
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;

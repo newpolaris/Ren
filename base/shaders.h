@@ -10,6 +10,8 @@ struct Shader
     uint32_t storage_buffer_mask_;
 };
 
+using Shaders = std::initializer_list<const Shader*>;
+
 struct DescriptorInfo
 {
     union {
@@ -43,6 +45,6 @@ struct DescriptorInfo
 	}
 };
 
-VkDescriptorUpdateTemplate createDescriptorUpdateTemplate(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, VkPipelineBindPoint pipelineBindPoint, VkPipelineLayout layout, const Shader& vs, const Shader& fs);
+VkDescriptorUpdateTemplate createDescriptorUpdateTemplate(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, VkPipelineBindPoint pipelineBindPoint, VkPipelineLayout layout, Shaders shaders);
 Shader createShader(VkDevice device, const std::vector<char>& code);
 void destroyShader(VkDevice device, Shader& shader);

@@ -35,6 +35,11 @@ VK_MEMORY_PROPERTY_HOST_CACHED_BIT - gpu fills buffer and you want to read that
           32 = acmr 0.75
           64 = acmr 0.65
 
+> 'Meshlet culling'
+
+1:19:01 - cone-culling-experments-log 의 결과를 base로 삼아서 비교, 거기서 budda는 24% 정도가 나옴
+          기본 설정에서는 meshlet은 3% 정도가 나옴. triangleCount를 줄여서 41으로 하니 10% 정도로 올라감
+
 
 
 happy_buddha, Nvidia 660m, one commandbuffer with wait-idle
@@ -61,6 +66,9 @@ Single  / Multiple / Indirect
 multiple indirect 의 성능이 더 낮거나 유사하다는 것
 그리고 scene 자체가 너무 단순히 가운데 객체가 있다는 것
 64개의 버텍스가 옵티멀이 아닐 수 있다는 점. (1) 테스트 할 때는 128 부터가 가장 best 였으나 (2) 에서는 64가 최적;
+
+(https://gist.github.com/zeux/1cef1417215add13c9eb26451f26afe2) 여기선 128 부터 떨어진다고 되어있음
+
 
 
 Worklist:
