@@ -3,6 +3,7 @@
 #if WIN32
 #include <windows.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
+#undef CreateSemaphore
 #endif
 
 #include <volk/volk.h>
@@ -72,15 +73,15 @@ VkInstance CreateInstance(
     #endif
     };
 
-    VkApplicationInfo application_info = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
-    application_info.pApplicationName = ApplicationName;
-    application_info.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-    application_info.pEngineName = EngineName;
-    application_info.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    application_info.apiVersion = VK_API_VERSION_1_1;
+    VkApplicationInfo app_info = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
+    app_info.pApplicationName = ApplicationName;
+    app_info.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+    app_info.pEngineName = EngineName;
+    app_info.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+    app_info.apiVersion = VK_API_VERSION_1_1;
 
     VkInstanceCreateInfo info = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
-    info.pApplicationInfo = &application_info;
+    info.pApplicationInfo = &app_info;
     info.enabledLayerCount = ARRAY_SIZE(validation_layers);
     info.ppEnabledLayerNames = validation_layers;
     info.enabledExtensionCount = ARRAY_SIZE(extension_names);
@@ -487,6 +488,22 @@ VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass
     return pipeline;
 }
 
+VkSemaphore CreateSemaphore(VkDevice device, VkSemaphoreCreateFlags flags) {
+    VkSemaphoreCreateInfo info = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+    info.flags = flags;
+    VkSemaphore semaphore = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateSemaphore(device, &info, nullptr, &semaphore));
+    return semaphore;
+}
+
+VkFence CreateFence(VkDevice device, VkFenceCreateFlagBits flags) {
+    VkFenceCreateInfo info { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+    info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    VkFence fence = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateFence(device, &info, nullptr, &fence));
+    return fence;
+}
+
 static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
                                                     VkDebugUtilsMessageTypeFlagsEXT messageType,
                                                     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
@@ -588,16 +605,10 @@ int main() {
     VK_ASSERT(vkAllocateCommandBuffers(device, &allocate_info, &command_buffer));
 
     // cpu-gpu synchronize
-    VkFenceCreateInfo fence_info { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-    fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    VkFence fence = CreateFence(device, VK_FENCE_CREATE_SIGNALED_BIT);
 
     // gpu-gpu synchronize
-    VkSemaphoreCreateInfo semaphore_info = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-    VkSemaphore semaphore = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateSemaphore(device, &semaphore_info, nullptr, &semaphore));
-
-    VkFence fence = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateFence(device, &fence_info, nullptr, &fence));
+    VkSemaphore semaphore = CreateSemaphore(device, 0);
 
     while (!glfwWindowShouldClose(windows)) {
         glfwPollEvents();
