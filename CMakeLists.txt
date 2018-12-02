@@ -49,6 +49,15 @@ set(GLFW_BUILD_TESTS    OFF CACHE STRING "" FORCE)
 set(GLFW_INSTALL        OFF CACHE STRING "" FORCE)
 add_subdirectory(external/glfw)
 
+# glog
+# set(BUILD_TESTING OFF CACHE STRING "" FORCE)
+# set(WITH_GFLAGS OFF CACHE STRING "" FORCE)
+# add_subdirectory(external/glog)
+
+IF(WIN32)
+add_definitions(-DVK_USE_PLATFORM_WIN32_KHR)
+ENDIF(WIN32)
+
 add_subdirectory(external/volk)
 add_subdirectory(external/meshoptimizer)
 

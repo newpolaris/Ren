@@ -13,3 +13,6 @@
 [submodule "external/volk"]
 	path = external/volk
 	url = https://github.com/zeux/volk.git
+[submodule "external/glog"]
+	path = external/glog
+	url = https://github.com/google/glog

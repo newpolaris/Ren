@@ -63,6 +63,7 @@ set (EXAMPLES
         02.modelRendering
         03.pushDescriptors
         04.meshlet
+        05.rin
 )
 
 buildExamples()
