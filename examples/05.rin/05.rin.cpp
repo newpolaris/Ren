@@ -405,6 +405,88 @@ void UpdateViewportScissor(VkExtent2D extent, VkViewport* viewport, VkRect2D* sc
     scissor->extent = extent;
 }
 
+VkShaderModule CreateShaderModule(VkDevice device, const char* filepath) {
+    auto code = readfile(filepath);
+    VkShaderModuleCreateInfo info = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+    info.codeSize = code.size();
+    info.pCode = reinterpret_cast<uint32_t*>(code.data());
+
+    VkShaderModule module = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateShaderModule(device, &info, nullptr, &module));
+    return module;
+}
+
+VkPipelineLayout CreatePipelineLayout(VkDevice device) {
+    VkPipelineLayoutCreateInfo info = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreatePipelineLayout(device, &info, nullptr, &layout));
+    return layout;
+}
+
+VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass pass, VkShaderModule vs, VkShaderModule fs) { 
+    VkPipelineShaderStageCreateInfo vertex_info = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+    vertex_info.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertex_info.module = vs;
+    vertex_info.pName = "main";
+
+    VkPipelineShaderStageCreateInfo fragment_info = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+    fragment_info.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragment_info.module = fs;
+    fragment_info.pName = "main";
+    VkPipelineShaderStageCreateInfo shader_stages[] = { vertex_info, fragment_info };
+
+    VkPipelineVertexInputStateCreateInfo vertexinputinfo { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+
+    VkPipelineInputAssemblyStateCreateInfo inputinfo { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
+    inputinfo.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewport_info { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
+    viewport_info.viewportCount = 1;
+    viewport_info.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo raster_info = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
+    raster_info.polygonMode = VK_POLYGON_MODE_FILL;
+    raster_info.cullMode = VK_CULL_MODE_NONE;
+    raster_info.frontFace = VK_FRONT_FACE_CLOCKWISE;
+
+    VkPipelineMultisampleStateCreateInfo multisample_info = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
+    multisample_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendAttachmentState blendstate = {};
+    blendstate.blendEnable = VK_FALSE;
+    blendstate.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendStateCreateInfo blend_info = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
+    blend_info.attachmentCount = 1;
+    blend_info.pAttachments = &blendstate;
+
+    VkDynamicState dynamic_state[] { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynamic_info = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
+    dynamic_info.dynamicStateCount = ARRAY_SIZE(dynamic_state);
+    dynamic_info.pDynamicStates = dynamic_state;
+
+    VkGraphicsPipelineCreateInfo pipeline_info = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
+    pipeline_info.stageCount = ARRAY_SIZE(shader_stages);
+    pipeline_info.pStages = shader_stages;
+    pipeline_info.pVertexInputState = &vertexinputinfo;
+    pipeline_info.pInputAssemblyState = &inputinfo;
+    pipeline_info.pViewportState = &viewport_info;
+    pipeline_info.pRasterizationState = &raster_info;
+    pipeline_info.pMultisampleState = &multisample_info;
+    pipeline_info.pColorBlendState = &blend_info;
+    pipeline_info.pDynamicState = &dynamic_info;
+
+    pipeline_info.layout = layout;
+    pipeline_info.renderPass = pass;
+    pipeline_info.subpass = 0;
+
+    VkPipelineCache pipeline_cache = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateGraphicsPipelines(device, pipeline_cache, 1, &pipeline_info, nullptr, &pipeline));
+
+    return pipeline;
+}
+
 static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
                                                     VkDebugUtilsMessageTypeFlagsEXT messageType,
                                                     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
@@ -484,86 +566,10 @@ int main() {
     VkQueue present_queue = VK_NULL_HANDLE;
     vkGetDeviceQueue(device, properties.queue_family_index, queue_index, &present_queue);
 
-    auto vertex_shader_code = readfile("shaders/05.rin/base.vert.spv");
-    VkShaderModuleCreateInfo vertex_module_createinfo = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
-    vertex_module_createinfo.codeSize = vertex_shader_code.size();
-    vertex_module_createinfo.pCode = reinterpret_cast<uint32_t*>(vertex_shader_code.data());
-
-    VkShaderModule vertex_module = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateShaderModule(device, &vertex_module_createinfo, nullptr, &vertex_module));
-
-    auto fragment_shader_code = readfile("shaders/05.rin/base.frag.spv");
-    VkShaderModuleCreateInfo fragment_module_createinfo = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
-    fragment_module_createinfo.codeSize = fragment_shader_code.size();
-    fragment_module_createinfo.pCode = reinterpret_cast<uint32_t*>(fragment_shader_code.data());
-
-    VkShaderModule fragment_module = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateShaderModule(device, &fragment_module_createinfo, nullptr, &fragment_module));
-
-    VkPipelineShaderStageCreateInfo vertex_stageinfo = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
-    vertex_stageinfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vertex_stageinfo.module = vertex_module;
-    vertex_stageinfo.pName = "main";
-
-    VkPipelineShaderStageCreateInfo fragment_stageinfo = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
-    fragment_stageinfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    fragment_stageinfo.module = fragment_module;
-    fragment_stageinfo.pName = "main";
-
-    VkPipelineLayoutCreateInfo pipeline_layoutinfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-    VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreatePipelineLayout(device, &pipeline_layoutinfo, nullptr, &pipeline_layout));
-
-    VkPipelineShaderStageCreateInfo shader_stages[] = { vertex_stageinfo, fragment_stageinfo };
-
-    VkPipelineVertexInputStateCreateInfo vertexinputinfo { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
-
-    VkPipelineInputAssemblyStateCreateInfo inputinfo { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
-    inputinfo.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    VkPipelineViewportStateCreateInfo viewport_info { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
-    viewport_info.viewportCount = 1;
-    viewport_info.scissorCount = 1;
-
-    VkPipelineRasterizationStateCreateInfo raster_info = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
-    raster_info.polygonMode = VK_POLYGON_MODE_FILL;
-    raster_info.cullMode = VK_CULL_MODE_NONE;
-    raster_info.frontFace = VK_FRONT_FACE_CLOCKWISE;
-
-    VkPipelineMultisampleStateCreateInfo multisample_info = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
-    multisample_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineColorBlendAttachmentState blendstate = {};
-    blendstate.blendEnable = VK_FALSE;
-    blendstate.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-
-    VkPipelineColorBlendStateCreateInfo blend_info = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
-    blend_info.attachmentCount = 1;
-    blend_info.pAttachments = &blendstate;
-
-    VkDynamicState dynamic_state[] { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-    VkPipelineDynamicStateCreateInfo dynamic_info = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
-    dynamic_info.dynamicStateCount = ARRAY_SIZE(dynamic_state);
-    dynamic_info.pDynamicStates = dynamic_state;
-
-    VkGraphicsPipelineCreateInfo pipeline_info = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
-    pipeline_info.stageCount = ARRAY_SIZE(shader_stages);
-    pipeline_info.pStages = shader_stages;
-    pipeline_info.pVertexInputState = &vertexinputinfo;
-    pipeline_info.pInputAssemblyState = &inputinfo;
-    pipeline_info.pViewportState = &viewport_info;
-    pipeline_info.pRasterizationState = &raster_info;
-    pipeline_info.pMultisampleState = &multisample_info;
-    pipeline_info.pColorBlendState = &blend_info;
-    pipeline_info.pDynamicState = &dynamic_info;
-
-    pipeline_info.layout = pipeline_layout;
-    pipeline_info.renderPass = renderpass;
-    pipeline_info.subpass = 0;
-
-    VkPipelineCache pipeline_cache = VK_NULL_HANDLE;
-    VkPipeline pipeline = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateGraphicsPipelines(device, pipeline_cache, 1, &pipeline_info, nullptr, &pipeline));
+    VkShaderModule vertex_module = CreateShaderModule(device, "shaders/05.rin/base.vert.spv");
+    VkShaderModule fragment_module = CreateShaderModule(device, "shaders/05.rin/base.frag.spv");
+    VkPipelineLayout layout = CreatePipelineLayout(device);
+    VkPipeline pipeline = CreatePipeline(device, layout, renderpass, vertex_module, fragment_module);
 
     VkCommandPoolCreateInfo info = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
     info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -657,7 +663,7 @@ int main() {
     vkDestroySemaphore(device, semaphore, nullptr);
 
     vkDestroyPipeline(device, pipeline, nullptr);
-    vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
+    vkDestroyPipelineLayout(device, layout, nullptr);
     vkDestroyShaderModule(device, vertex_module, nullptr);
     vkDestroyShaderModule(device, fragment_module, nullptr);
 
