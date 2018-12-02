@@ -335,6 +335,20 @@ int main() {
 
     VkExtent2D swapchain_extent = capabilities.currentExtent;
 
+    // viewport trick to make positive y upward 
+    VkViewport viewport = {};
+    viewport.x = 0.f;
+    viewport.y = static_cast<float>(swapchain_extent.height);
+    viewport.width = static_cast<float>(swapchain_extent.width);
+    viewport.height = -static_cast<float>(swapchain_extent.height);
+    viewport.minDepth = 0.f;
+    viewport.maxDepth = 1.f;
+
+    VkRect2D scissor {
+        VkOffset2D { 0, 0 },
+        swapchain_extent,
+    };
+
     uint32_t swapchain_imagecount = 0;
     VK_ASSERT(vkGetSwapchainImagesKHR(device, swapchain, &swapchain_imagecount, nullptr));
     std::vector<VkImage> swapchain_images(swapchain_imagecount);
@@ -366,7 +380,7 @@ int main() {
     VkAttachmentDescription description = {};
     description.format = swapchain_format.format;
     description.samples = VK_SAMPLE_COUNT_1_BIT;
-    description.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    description.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     description.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     description.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     description.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -449,25 +463,9 @@ int main() {
     VkPipelineInputAssemblyStateCreateInfo inputinfo { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
     inputinfo.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
-    // viewport trick to make positive y upward 
-    VkViewport viewport = {};
-    viewport.x = 0.f;
-    viewport.y = static_cast<float>(swapchain_extent.height);
-    viewport.width = static_cast<float>(swapchain_extent.width);
-    viewport.height = -static_cast<float>(swapchain_extent.height);
-    viewport.minDepth = 0.f;
-    viewport.maxDepth = 1.f;
-
-    VkRect2D scissor {
-        VkOffset2D { 0, 0 },
-        swapchain_extent,
-    };
-
     VkPipelineViewportStateCreateInfo viewport_info { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
     viewport_info.viewportCount = 1;
-    viewport_info.pViewports = &viewport;
     viewport_info.scissorCount = 1;
-    viewport_info.pScissors = &scissor;
 
     VkPipelineRasterizationStateCreateInfo raster_info = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
     raster_info.polygonMode = VK_POLYGON_MODE_FILL;
@@ -485,6 +483,11 @@ int main() {
     blend_info.attachmentCount = 1;
     blend_info.pAttachments = &blendstate;
 
+    VkDynamicState dynamic_state[] { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynamic_info = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
+    dynamic_info.dynamicStateCount = ARRAY_SIZE(dynamic_state);
+    dynamic_info.pDynamicStates = dynamic_state;
+
     VkGraphicsPipelineCreateInfo pipeline_info = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
     pipeline_info.stageCount = ARRAY_SIZE(shader_stages);
     pipeline_info.pStages = shader_stages;
@@ -494,6 +497,8 @@ int main() {
     pipeline_info.pRasterizationState = &raster_info;
     pipeline_info.pMultisampleState = &multisample_info;
     pipeline_info.pColorBlendState = &blend_info;
+    pipeline_info.pDynamicState = &dynamic_info;
+
     pipeline_info.layout = pipeline_layout;
     pipeline_info.renderPass = renderpass;
     pipeline_info.subpass = 0;
@@ -542,9 +547,8 @@ int main() {
         VkCommandBufferBeginInfo begininfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
         VK_ASSERT(vkBeginCommandBuffer(command_buffer, &begininfo));
 
-        constexpr VkClearValue clear_values[] {
-            VkClearColorValue { 0.f, 0.f, 0.f, 0.f },
-        };
+        VkClearColorValue clear_color = { std::sin(static_cast<float>(glfwGetTime()))*0.5f + 0.5f, 0.5f, 0.5f, 1.0f };
+        const VkClearValue clear_values[] = { clear_color, };
 
         VkRenderPassBeginInfo pass_begin_info = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
         pass_begin_info.renderPass = renderpass;
@@ -555,6 +559,8 @@ int main() {
 
         vkCmdBeginRenderPass(command_buffer, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkCmdSetViewport(command_buffer, 0, 1, &viewport);
+        vkCmdSetScissor(command_buffer, 0, 1, &scissor);
         vkCmdDraw(command_buffer, 3, 1, 0, 0);
         vkCmdEndRenderPass(command_buffer);
         VK_ASSERT(vkEndCommandBuffer(command_buffer));
