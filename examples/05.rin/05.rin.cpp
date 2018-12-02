@@ -36,7 +36,6 @@
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 #endif
 
-// TODO: exist check
 std::vector<char> readfile(const std::string& filename)
 {
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
@@ -148,37 +147,32 @@ VkPhysicalDevice CreatePhysicalDevice(VkInstance instance) {
     return devices.front();
 }
 
-std::optional<uint32_t> GetQueueFamilyIndex(VkPhysicalDevice device, VkSurfaceKHR surface, VkQueueFlags flags) {
+// Choose graphics queue that also support present
+uint32_t GetQueueFamilyIndex(VkPhysicalDevice device, VkSurfaceKHR surface) {
     uint32_t count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(device, &count, nullptr);
 
     std::vector<VkQueueFamilyProperties> properties(count);
     vkGetPhysicalDeviceQueueFamilyProperties(device, &count, properties.data());
 
-    for (size_t i = 0; i < properties.size(); i++)
-    {
+    for (size_t i = 0; i < properties.size(); i++) {
         VkBool32 support = VK_FALSE;
         VK_ASSERT(vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &support));
-        if (!support)
-            continue;
 
-        if (properties[i].queueFlags & flags && properties[i].queueCount > 0)
+        if ((properties[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && properties[i].queueCount > 0)
             return i;
     }
-    return std::optional<size_t>();
+    return VK_QUEUE_FAMILY_IGNORED;
 }
 
-VkDevice CreateDevice(VkPhysicalDevice physical_device, VkSurfaceKHR surface) {
+VkDevice CreateDevice(VkPhysicalDevice physical_device, VkSurfaceKHR surface, uint32_t queue_family_index) {
     std::vector<const char*> device_extensions {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     };
 
-    auto familyIndex = GetQueueFamilyIndex(physical_device, surface, VK_QUEUE_GRAPHICS_BIT);
-    ASSERT(familyIndex.has_value());
-
-    float qeue_priorites[] = { 1.f, 1.f, 1.f };
+    const float qeue_priorites[] = { 1.f };
     VkDeviceQueueCreateInfo queue_create_info = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO  };
-    queue_create_info.queueFamilyIndex = familyIndex.value();
+    queue_create_info.queueFamilyIndex = queue_family_index;
     queue_create_info.queueCount = ARRAY_SIZE(qeue_priorites);
     queue_create_info.pQueuePriorities = qeue_priorites;
 
@@ -218,7 +212,7 @@ VkSurfaceFormatKHR GetSurfaceFormat(VkPhysicalDevice physical_device, VkSurfaceK
 
 VkSwapchainKHR CreateSwapchain(VkDevice device, VkPhysicalDevice physical_device, VkSurfaceKHR surface, 
                                const VkSurfaceCapabilitiesKHR& capabilities, VkSurfaceFormatKHR surfaceformat,
-                               VkSwapchainKHR oldswapchain) {
+                               uint32_t queue_family_index, VkSwapchainKHR oldswapchain) {
     constexpr VkCompositeAlphaFlagBitsKHR composite_alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     constexpr VkSurfaceTransformFlagBitsKHR pretransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
 
@@ -252,11 +246,8 @@ VkSwapchainKHR CreateSwapchain(VkDevice device, VkPhysicalDevice physical_device
     info.imageExtent = currentExtent;
     info.imageArrayLayers = std::min(1u, capabilities.maxImageArrayLayers);
     info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    // TODO: support conurrent - start
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    info.queueFamilyIndexCount = 0;
-    info.pQueueFamilyIndices = nullptr;
-    // TODO: support conurrent - end
+    info.queueFamilyIndexCount = queue_family_index;
     info.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
     info.compositeAlpha = composite_alpha;
     info.presentMode =  presentmode;
@@ -331,13 +322,16 @@ int main() {
 
     VkPhysicalDevice physical_device = CreatePhysicalDevice(instance);
 
-    VkDevice device = CreateDevice(physical_device, surface);
+    const uint32_t queue_family_index = GetQueueFamilyIndex(physical_device, surface);
+    ASSERT(queue_family_index != VK_QUEUE_FAMILY_IGNORED);
+
+    VkDevice device = CreateDevice(physical_device, surface, queue_family_index);
 
     VkSurfaceCapabilitiesKHR capabilities = {};
     VK_ASSERT(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &capabilities));
     VkSurfaceFormatKHR swapchain_format = GetSurfaceFormat(physical_device, surface);
     VkSwapchainKHR swapchain = CreateSwapchain(device, physical_device, surface, capabilities, swapchain_format,
-                                               VK_NULL_HANDLE);
+                                               queue_family_index, VK_NULL_HANDLE);
 
     VkExtent2D swapchain_extent = capabilities.currentExtent;
 
@@ -412,10 +406,11 @@ int main() {
         framebuffers.push_back(framebuffer);
     }
 
-    uint32_t queue_family_index = 0;
-    uint32_t queue_index = 0;
-    VkQueue commandqueue = VK_NULL_HANDLE;
-    vkGetDeviceQueue(device, queue_family_index, queue_index, &commandqueue);
+    constexpr uint32_t queue_index = 0;
+    VkQueue command_queue = VK_NULL_HANDLE;
+    vkGetDeviceQueue(device, queue_family_index, queue_index, &command_queue);
+    VkQueue present_queue = VK_NULL_HANDLE;
+    vkGetDeviceQueue(device, queue_family_index, queue_index, &present_queue);
 
     auto vertex_shader_code = readfile("shaders/05.rin/base.vert.spv");
     VkShaderModuleCreateInfo vertex_module_createinfo = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
@@ -509,7 +504,7 @@ int main() {
 
     VkCommandPoolCreateInfo info = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
     info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    info.queueFamilyIndex = 0;
+    info.queueFamilyIndex = queue_family_index;
 
     VkCommandPool commandpool = VK_NULL_HANDLE;
     VK_ASSERT(vkCreateCommandPool(device, &info, nullptr, &commandpool));
@@ -520,25 +515,32 @@ int main() {
     allocate_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     allocate_info.commandBufferCount = 1;
 
-    VkCommandBuffer commandbuffer = VK_NULL_HANDLE;
-    VK_ASSERT(vkAllocateCommandBuffers(device, &allocate_info, &commandbuffer));
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    VK_ASSERT(vkAllocateCommandBuffers(device, &allocate_info, &command_buffer));
 
+    // cpu-gpu synchronize
     VkFenceCreateInfo fence_info { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
     fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+    // gpu-gpu synchronize
+    VkSemaphoreCreateInfo semaphore_info = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+    VkSemaphore semaphore = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateSemaphore(device, &semaphore_info, nullptr, &semaphore));
 
     VkFence fence = VK_NULL_HANDLE;
     VK_ASSERT(vkCreateFence(device, &fence_info, nullptr, &fence));
 
     while (!glfwWindowShouldClose(windows)) {
+        glfwPollEvents();
+
         VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
-        VK_ASSERT(vkResetFences(device, 1, &fence));
 
         uint32_t imageindex = 0;
-        VK_ASSERT(vkAcquireNextImageKHR(device, swapchain, ~0ull, VK_NULL_HANDLE, fence, &imageindex));
+        VK_ASSERT(vkAcquireNextImageKHR(device, swapchain, ~0ull, semaphore, VK_NULL_HANDLE, &imageindex));
 
-        VK_ASSERT(vkResetCommandBuffer(commandbuffer, 0));
+        VK_ASSERT(vkResetCommandBuffer(command_buffer, 0));
         VkCommandBufferBeginInfo begininfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-        VK_ASSERT(vkBeginCommandBuffer(commandbuffer, &begininfo));
+        VK_ASSERT(vkBeginCommandBuffer(command_buffer, &begininfo));
 
         constexpr VkClearValue clear_values[] {
             VkClearColorValue { 0.f, 0.f, 0.f, 0.f },
@@ -551,40 +553,33 @@ int main() {
         pass_begin_info.clearValueCount = ARRAY_SIZE(clear_values);
         pass_begin_info.pClearValues = clear_values;
 
-        vkCmdBeginRenderPass(commandbuffer, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
-        vkCmdBindPipeline(commandbuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-        vkCmdDraw(commandbuffer, 3, 1, 0, 0);
-        vkCmdEndRenderPass(commandbuffer);
-        VK_ASSERT(vkEndCommandBuffer(commandbuffer));
+        vkCmdBeginRenderPass(command_buffer, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkCmdDraw(command_buffer, 3, 1, 0, 0);
+        vkCmdEndRenderPass(command_buffer);
+        VK_ASSERT(vkEndCommandBuffer(command_buffer));
 
-        VkPipelineStageFlags stage_flags[] = { VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT };
+        VkPipelineStageFlags stage_flags[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
         VkSubmitInfo submit = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
-        submit.waitSemaphoreCount = 0;
-        submit.pWaitSemaphores = nullptr;
+        submit.waitSemaphoreCount = 1;
+        submit.pWaitSemaphores = &semaphore;
         submit.pWaitDstStageMask = stage_flags;
         submit.commandBufferCount = 1;
-        submit.pCommandBuffers = &commandbuffer;
-        submit.signalSemaphoreCount = 0;
-        submit.pSignalSemaphores = nullptr;
+        submit.pCommandBuffers = &command_buffer;
 
-        VK_ASSERT(vkQueueSubmit(commandqueue, 1, &submit, VK_NULL_HANDLE));
+        VK_ASSERT(vkResetFences(device, 1, &fence));
+        VK_ASSERT(vkQueueSubmit(command_queue, 1, &submit, fence));
 
         VkPresentInfoKHR present_info = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
         present_info.swapchainCount = 1;
         present_info.pSwapchains = &swapchain;
         present_info.pImageIndices = &imageindex;
-
-        // TODO: presentqueue
-        VK_ASSERT(vkQueuePresentKHR(commandqueue, &present_info));
-        VK_ASSERT(vkQueueWaitIdle(commandqueue));
-
-        glfwPollEvents();
+        VK_ASSERT(vkQueuePresentKHR(present_queue, &present_info));
     }
 
-    VK_ASSERT(vkQueueWaitIdle(commandqueue));
-    VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
-    VK_ASSERT(vkResetFences(device, 1, &fence));
+    VK_ASSERT(vkDeviceWaitIdle(device));
     vkDestroyFence(device, fence, nullptr);
+    vkDestroySemaphore(device, semaphore, nullptr);
 
     vkDestroyPipeline(device, pipeline, nullptr);
     vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
