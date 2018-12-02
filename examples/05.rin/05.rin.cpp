@@ -19,6 +19,7 @@
 #include <sstream>
 #include <iostream>
 #include <fstream>
+#include <objparser.h>
 
 #ifndef ASSERT
 #define ASSERT(x) \

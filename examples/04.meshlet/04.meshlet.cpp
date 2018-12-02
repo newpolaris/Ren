@@ -2,7 +2,7 @@
 #include <windows.h>
 #endif
 
-#include <common.h>
+#include "common.h"
 
 #define GLFW_INCLUDE_VULKAN
 #include <glfw/glfw3.h>
@@ -27,10 +27,10 @@
 
 #include <objparser.h>
 #include <meshoptimizer.h>
-#include <shaders.h>
-#include <filesystem.h>
-#include <pipeline.h>
-#include <swapchain.h>
+#include "shaders.h"
+#include "filesystem.h"
+#include "pipeline.h"
+#include "swapchain.h"
 
 const int WIDTH = 1280;
 const int HEIGHT = 960;
