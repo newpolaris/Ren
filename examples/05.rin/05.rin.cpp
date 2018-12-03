@@ -21,16 +21,18 @@
 #include <fstream>
 #include <chrono>
 #include <objparser.h>
+#include <cstdlib>
+
 
 #ifndef ASSERT
 #define ASSERT(x) \
-    assert((x))
+    do { \
+        if (!(x)) __assert(#x, __FILE__, __LINE__); \
+    } while(0)
 #endif
-
-#ifndef CHECK_TRUE
-#ifdef _DEBUG
-#define CHECK_TRUE(x) ASSERT((x))
-#endif
+#ifndef __assert
+#define __assert(e, file, line) \
+	((void)printf("%s:%u: failed assertion `%s'\n", file, line, e), abort())
 #endif
 
 #ifndef VK_ASSERT
@@ -82,7 +84,7 @@ float NegativeIndexHelper(float* src, int i, int sub)
 Mesh LoadMesh(const std::string& filename)
 {
     ObjFile obj;
-    ASSERT(objParseFile(obj, filename.c_str()));
+    objParseFile(obj, filename.c_str());
 
     size_t index_count = obj.f_size / 3; 
     std::vector<Vertex> vertices(index_count);
@@ -662,6 +664,8 @@ struct Buffer {
 
 Buffer CreateBuffer(VkDevice device, const VkPhysicalDeviceMemoryProperties& properties, const BufferCreateinfo& info)
 {
+    ASSERT(info.size);
+
     VkBufferCreateInfo create_info = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
     create_info.size = info.size;
     create_info.usage = info.usage;
@@ -867,7 +871,7 @@ int main() {
     VkCommandBuffer command_buffer = CreateCommandBuffer(device, command_pool);
 
     // cpu-gpu synchronize
-    VkFence fence = CreateFence(device, VK_FENCE_CREATE_SIGNALED_BIT);
+    VkFence fence = CreateFence(device, 0);
 
     // gpu-gpu synchronize
     VkSemaphore semaphore = CreateSemaphore(device, 0);
@@ -903,8 +907,6 @@ int main() {
         glfwPollEvents();
 
         auto cpu_begin = std::chrono::steady_clock::now(); 
-
-        VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
 
         uint32_t imageindex = 0;
         VkResult result = vkAcquireNextImageKHR(device, swapchain.swapchain, ~0ull, semaphore, VK_NULL_HANDLE, &imageindex);
@@ -970,15 +972,18 @@ int main() {
         auto cpu_end = std::chrono::steady_clock::now(); 
         auto cpu_time = std::chrono::duration<float>(cpu_end - cpu_begin).count();
 
+        // 'VK_QUERY_RESULT_WAIT_BIT' seems not work properly
+        VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
         uint64_t timestamps[2] = {};
         vkGetQueryPoolResults(device, timestamp_pool, 0, 2, sizeof(timestamps), timestamps, sizeof(uint64_t),
-                              VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+                              VK_QUERY_RESULT_64_BIT);
 
         auto gpu_scaler = physical_properties.properties.limits.timestampPeriod;
         auto gpu_time = static_cast<float>((timestamps[1] - timestamps[0]) * 1e-6) * gpu_scaler;
+        auto triangle_count = static_cast<int>(mesh.indices.size() / 3);
              
         char title[256] = {};  
-        sprintf(title, "cpu: %.3f ms, gpu: %.3f ms", cpu_time, gpu_time);
+        sprintf(title, "cpu: %.3f ms; gpu: %.3f ms; triangles %d", cpu_time, gpu_time, triangle_count);
         glfwSetWindowTitle(windows, title);
     }
 

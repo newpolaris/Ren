@@ -16,7 +16,8 @@ VK_MEMORY_PROPERTY_HOST_CACHED_BIT - gpu fills buffer and you want to read that
 0:40:45 - Device Local Memory make 0.31 ms
 0:43:42 - Draw 10 times, makes mesh shader 10.41 vs 2.3 ms (stroage buffer or FVF)
 0:54:26 - Test optimizeVertexCache with randome suffle
-1:02:32 - Test push descriptor with position * 1e-9. 1.9 ms > 1.0 ms. 레스터한것과 안한것의 결과가 2배정도면 거의 optimzal 로 본다. 5 ~ 10 billion 이 결과 예상값이고 5 정도 나오면 그 결과에 만족할 수 있음.
+1:02:32 - Test push descriptor with position * 1e-9. 1.9 ms > 1.0 ms. 레스터한것과 안한것의 결과가 2배정도면 거의 optimal 로 불수 있지 않을까?
+          5 ~ 10 billion 이 결과 예상값이고 5 정도 나오면 그 결과에 만족할 수 있음.
 1:04:20 - N triangle > n/2 vertices (minecraft 같은건 nx2)
           upto 128 and one is used by gl_primitiveCountNV (so, 127) and makes divided by 3. up to 42 triangles
 1:09:12 - vertex data: 16 KB / meshlet & 64 vertices > 16 * 1024 / 64 > 256 byte per vertex
