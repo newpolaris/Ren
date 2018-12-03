@@ -44,6 +44,22 @@
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 #endif
 
+// from boost
+template <class integral, class size_t>
+constexpr integral align_up(integral x, size_t a) noexcept {
+    return integral((x + (integral(a) - 1)) & ~integral(a - 1));
+}
+
+template <class integral, class size_t>
+constexpr bool bit_test(integral x, size_t bit) noexcept {
+    return x & (1 << bit);
+}
+
+template <class integral_1, class integral_2>
+bool flag_test(integral_1 x, integral_2 flag) noexcept {
+    return (x & flag) == flag;
+}
+
 struct Vertex
 {
     float x, y, z;
@@ -562,9 +578,9 @@ VkSemaphore CreateSemaphore(VkDevice device, VkSemaphoreCreateFlags flags) {
     return semaphore;
 }
 
-VkFence CreateFence(VkDevice device, VkFenceCreateFlagBits flags) {
+VkFence CreateFence(VkDevice device, VkFenceCreateFlags flags) {
     VkFenceCreateInfo info { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-    info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    info.flags = flags;
     VkFence fence = VK_NULL_HANDLE;
     VK_ASSERT(vkCreateFence(device, &info, nullptr, &fence));
     return fence;
@@ -582,18 +598,19 @@ VkCommandBuffer CreateCommandBuffer(VkDevice device, VkCommandPool pool) {
 }
 
 struct BufferCreateinfo {
-    const void* data;
-    VkDeviceSize size;
     VkBufferUsageFlags usage;
     VkMemoryPropertyFlags flags;
+    VkDeviceSize size;
+    const void* data;
 };
 
 struct Buffer {
     VkBuffer buffer;
     VkDeviceMemory memory;
-    VkDeviceSize size;
     VkBufferUsageFlags usage;
     VkMemoryPropertyFlags flags;
+    VkDeviceSize size;
+    void* data;
 };
 
 Buffer CreateBuffer(VkDevice device, const VkPhysicalDeviceMemoryProperties& properties, const BufferCreateinfo& info)
@@ -612,14 +629,14 @@ Buffer CreateBuffer(VkDevice device, const VkPhysicalDeviceMemoryProperties& pro
     uint32_t type_index = 0;
     uint32_t heap_index = 0;
     for (uint32_t i = 0; i < properties.memoryTypeCount; i++) {
-        if ((requirement.memoryTypeBits & (1 << i)) &&
-            ((properties.memoryTypes[i].propertyFlags & info.flags) == info.flags)) {
+        if (flag_test(properties.memoryTypes[i].propertyFlags, info.flags) &&
+            bit_test(requirement.memoryTypeBits, i)) {
             type_index = i;
             heap_index = properties.memoryTypes[i].heapIndex; 
         }
     }
 
-    VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    VkMemoryAllocateInfo alloc = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
     alloc.memoryTypeIndex = type_index;
     alloc.allocationSize = requirement.size;
 
@@ -629,14 +646,14 @@ Buffer CreateBuffer(VkDevice device, const VkPhysicalDeviceMemoryProperties& pro
     VkDeviceSize offset = 0;
     VK_ASSERT(vkBindBufferMemory(device, buffer, memory, offset));
 
-    if (info.data)
-    {
-        void* data = nullptr;
+    void* data = nullptr;
+    if (info.flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
         VK_ASSERT(vkMapMemory(device, memory, 0, requirement.size, 0, &data));
-        memcpy(data, info.data, static_cast<uint32_t>(create_info.size));
+        if (info.data)
+            memcpy(data, info.data, static_cast<uint32_t>(info.size));
     }
 
-    return Buffer { buffer, memory, requirement.size, info.flags, info.usage };
+    return Buffer { buffer, memory, info.flags, info.usage, requirement.size, data };
 }
 
 void DestroyBuffer(VkDevice device, Buffer* buffer)
@@ -647,6 +664,49 @@ void DestroyBuffer(VkDevice device, Buffer* buffer)
     buffer->memory = VK_NULL_HANDLE;
     vkDestroyBuffer(device, buffer->buffer, nullptr);
     buffer->buffer = VK_NULL_HANDLE;
+    buffer->data = nullptr;
+}
+
+void CopyBuffer(VkDevice device, VkCommandPool pool, VkQueue queue, 
+                const Buffer& src, VkDeviceSize size, const Buffer& dst)
+{
+    VkCommandBufferAllocateInfo alloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc.commandPool = pool;
+    alloc.commandBufferCount = 1;
+
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    vkAllocateCommandBuffers(device, &alloc, &command);
+
+    VK_ASSERT(vkResetCommandBuffer(command, 0));
+    VkCommandBufferBeginInfo begin { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    VK_ASSERT(vkBeginCommandBuffer(command, &begin));
+    
+    VkBufferCopy resion = { 0, 0, size };
+    vkCmdCopyBuffer(command, src.buffer, dst.buffer, 1, &resion);
+    VK_ASSERT(vkEndCommandBuffer(command));
+
+    VkSubmitInfo submit = {};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &command;
+
+    VkFence fence = CreateFence(device, 0);
+    VK_ASSERT(vkQueueSubmit(queue, 1, &submit, fence));
+    VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
+    vkDestroyFence(device, fence, nullptr);
+}
+
+void UploadBuffer(VkDevice device, VkCommandPool pool, VkQueue queue,
+                  const Buffer& staging, const Buffer& dst, VkDeviceSize size, const void* data)
+{
+    ASSERT(size < dst.size);
+    ASSERT(staging.data && data);
+
+    memcpy(staging.data, data, static_cast<size_t>(size));
+    
+    CopyBuffer(device, pool, queue, staging, size, dst); 
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -682,11 +742,6 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityF
     if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
         ASSERT(!"Validation error occurs!");
     return VK_FALSE;
-}
-
-template <class integral, class size_t>
-constexpr integral align_up(integral x, size_t a) noexcept {
-    return integral((x + (integral(a) - 1)) & ~integral(a - 1));
 }
 
 int main() {
@@ -772,40 +827,16 @@ int main() {
     VkMemoryPropertyFlags host_memory_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
                                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT; 
 
-    VkDeviceSize vb_size = sizeof(Vertex)*vertices.size();
-    Buffer vb = CreateBuffer(device, physical_properties.memory, {
-        nullptr, vb_size,  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        device_local_flags });
+    const VkDeviceSize vb_size = sizeof(Vertex)*vertices.size();
 
     Buffer staging = CreateBuffer(device, physical_properties.memory, { 
-        vertices.data(), vb_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host_memory_flags });
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host_memory_flags, 1024*1024*32 });
 
-    {
-        VkCommandBufferAllocateInfo alloc = {};
-        alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        alloc.commandPool = command_pool;
-        alloc.commandBufferCount = 1;
+    Buffer vb = CreateBuffer(device, physical_properties.memory, {
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        device_local_flags, vb_size });
 
-        VkCommandBuffer command_buffer = VK_NULL_HANDLE;
-        vkAllocateCommandBuffers(device, &alloc, &command_buffer);
-
-        VK_ASSERT(vkResetCommandBuffer(command_buffer, 0));
-        VkCommandBufferBeginInfo begin{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-        VK_ASSERT(vkBeginCommandBuffer(command_buffer, &begin));
-        
-        VkBufferCopy resion = { 0, 0, vb_size };
-        vkCmdCopyBuffer(command_buffer, staging.buffer, vb.buffer, 1, &resion);
-        VK_ASSERT(vkEndCommandBuffer(command_buffer));
-
-        VkSubmitInfo submit_info = {};
-        submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submit_info.commandBufferCount = 1;
-        submit_info.pCommandBuffers = &command_buffer;
-
-        VK_ASSERT(vkQueueSubmit(command_queue, 1, &submit_info, VK_NULL_HANDLE));
-        VK_ASSERT(vkQueueWaitIdle(command_queue));
-    }
+    UploadBuffer(device, command_pool, command_queue, staging, vb, vb_size, vertices.data());
 
     while(!glfwWindowShouldClose(windows)) {
         glfwPollEvents();
