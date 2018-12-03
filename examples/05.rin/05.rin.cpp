@@ -19,6 +19,7 @@
 #include <sstream>
 #include <iostream>
 #include <fstream>
+#include <chrono>
 #include <objparser.h>
 
 #ifndef ASSERT
@@ -181,22 +182,25 @@ VkPhysicalDevice CreatePhysicalDevice(VkInstance instance) {
 using QueueFamilyProperties = std::vector<VkQueueFamilyProperties>;
 
 struct PhysicalDeviceProperties {
+    VkPhysicalDeviceProperties properties;
     VkPhysicalDeviceMemoryProperties memory;
     QueueFamilyProperties queue;
 };
 
 PhysicalDeviceProperties CreatePhysicalDeviceProperties(VkPhysicalDevice device)
 {
-    PhysicalDeviceProperties properties = {};
+    VkPhysicalDeviceProperties properties;
+    vkGetPhysicalDeviceProperties(device, &properties);
 
-    vkGetPhysicalDeviceMemoryProperties(device, &properties.memory);
+    VkPhysicalDeviceMemoryProperties memory;
+    vkGetPhysicalDeviceMemoryProperties(device, &memory);
 
     uint32_t count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(device, &count, nullptr);
-    properties.queue.resize(count);
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &count, properties.queue.data());
+    QueueFamilyProperties queue(count);
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &count, queue.data());
 
-    return properties;
+    return PhysicalDeviceProperties { properties, memory, queue };
 }
 
 // Choose graphics queue that also support present
@@ -709,6 +713,17 @@ void UploadBuffer(VkDevice device, VkCommandPool pool, VkQueue queue,
     CopyBuffer(device, pool, queue, staging, size, dst); 
 }
 
+VkQueryPool CreateQueryPool(VkDevice device, VkQueryType type, uint32_t count, 
+                            VkQueryPipelineStatisticFlags statistics) {
+    VkQueryPoolCreateInfo info = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+    info.queryType = type;
+    info.queryCount = count;
+    info.pipelineStatistics = statistics;
+    VkQueryPool pool = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateQueryPool(device, &info, nullptr, &pool));
+    return pool;
+}
+
 static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
                                                     VkDebugUtilsMessageTypeFlagsEXT messageType,
                                                     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
@@ -838,8 +853,12 @@ int main() {
 
     UploadBuffer(device, command_pool, command_queue, staging, vb, vb_size, vertices.data());
 
+    VkQueryPool timestamp_pool = CreateQueryPool(device, VK_QUERY_TYPE_TIMESTAMP, 1024, 0);
+
     while(!glfwWindowShouldClose(windows)) {
         glfwPollEvents();
+
+        auto cpu_begin = std::chrono::steady_clock::now(); 
 
         VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
 
@@ -861,6 +880,8 @@ int main() {
         VkCommandBufferBeginInfo begininfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
         VK_ASSERT(vkBeginCommandBuffer(command_buffer, &begininfo));
 
+        vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 0);
+
         VkClearColorValue clear_color = { std::sin(static_cast<float>(glfwGetTime()))*0.5f + 0.5f, 0.5f, 0.5f, 1.0f };
         const VkClearValue clear_values[] = { clear_color, };
 
@@ -879,6 +900,9 @@ int main() {
         vkCmdBindVertexBuffers(command_buffer, 0, 1, &vb.buffer, &offset);
         vkCmdDraw(command_buffer, 3, 1, 0, 0);
         vkCmdEndRenderPass(command_buffer);
+
+        vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 1);
+
         VK_ASSERT(vkEndCommandBuffer(command_buffer));
 
         VkPipelineStageFlags stage_flags[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
@@ -897,6 +921,20 @@ int main() {
         present_info.pSwapchains = &swapchain.swapchain;
         present_info.pImageIndices = &imageindex;
         vkQueuePresentKHR(present_queue, &present_info);
+
+        auto cpu_end = std::chrono::steady_clock::now(); 
+        auto cpu_time = std::chrono::duration<float>(cpu_end - cpu_begin).count();
+
+        uint64_t timestamps[2] = {};
+        vkGetQueryPoolResults(device, timestamp_pool, 0, 2, sizeof(timestamps), timestamps, sizeof(uint64_t),
+                              VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+
+        auto gpu_scaler = physical_properties.properties.limits.timestampPeriod;
+        auto gpu_time = static_cast<float>((timestamps[1] - timestamps[0]) * 1e-6) * gpu_scaler;
+             
+        char title[256] = {};  
+        sprintf(title, "cpu: %.3f ms, gpu: %.3f ms", cpu_time, gpu_time);
+        glfwSetWindowTitle(windows, title);
     }
 
     VK_ASSERT(vkDeviceWaitIdle(device));
@@ -905,6 +943,8 @@ int main() {
 
     DestroyBuffer(device, &staging);
     DestroyBuffer(device, &vb);
+
+    vkDestroyQueryPool(device, timestamp_pool, nullptr);
 
     vkDestroyPipeline(device, pipeline, nullptr);
     vkDestroyPipelineLayout(device, layout, nullptr);
