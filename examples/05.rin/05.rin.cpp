@@ -68,6 +68,49 @@ struct Vertex
     float tu, tv;
 };
 
+struct Mesh
+{
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+};
+
+float NegativeIndexHelper(float* src, int i, int sub)
+{
+    return i < 0 ? 0.f : src[i * 3 + sub];
+}
+
+Mesh LoadMesh(const std::string& filename)
+{
+    ObjFile obj;
+    ASSERT(objParseFile(obj, filename.c_str()));
+
+    size_t index_count = obj.f_size / 3; 
+    std::vector<Vertex> vertices(index_count);
+
+    for (size_t i = 0; i < index_count; i++)
+    {
+        Vertex& v = vertices[i];
+
+        int vi = obj.f[i * 3 + 0];
+        int vti = obj.f[i * 3 + 1];
+        int vni = obj.f[i * 3 + 2];
+
+        v.x = NegativeIndexHelper(obj.v, vi, 0);
+        v.y = NegativeIndexHelper(obj.v, vi, 1);
+        v.z = NegativeIndexHelper(obj.v, vi, 2);
+        v.nx = NegativeIndexHelper(obj.vn, vni, 0);
+        v.ny = NegativeIndexHelper(obj.vn, vni, 1);
+        v.nz = NegativeIndexHelper(obj.vn, vni, 2);
+        v.tu = NegativeIndexHelper(obj.vt, vti, 0);
+        v.tv = NegativeIndexHelper(obj.vt, vti, 1);
+    }
+
+    std::vector<uint32_t> indices(index_count);
+    for (uint32_t i = 0; i < static_cast<uint32_t>(index_count); i++)
+        indices[i] = i;
+    return Mesh { std::move(vertices), std::move(indices) };
+}
+
 std::vector<char> readfile(const std::string& filename)
 {
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
@@ -516,7 +559,7 @@ VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass
     VkVertexInputAttributeDescription attributes[] = { 
         { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, x) },
         { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, nx) },
-        { 2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, tu) },
+        { 2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, tu) },
     };
     VkPipelineVertexInputStateCreateInfo vertex_input_info { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
     vertex_input_info.vertexBindingDescriptionCount = ARRAY_SIZE(bindings);
@@ -705,7 +748,7 @@ void CopyBuffer(VkDevice device, VkCommandPool pool, VkQueue queue,
 void UploadBuffer(VkDevice device, VkCommandPool pool, VkQueue queue,
                   const Buffer& staging, const Buffer& dst, VkDeviceSize size, const void* data)
 {
-    ASSERT(size < dst.size);
+    ASSERT(size <= dst.size);
     ASSERT(staging.data && data);
 
     memcpy(staging.data, data, static_cast<size_t>(size));
@@ -829,29 +872,30 @@ int main() {
     // gpu-gpu synchronize
     VkSemaphore semaphore = CreateSemaphore(device, 0);
 
-    // ObjFile obj;
-    // ASSERT(objParseFile(obj, "models/kitten.obj"));
+    const char* objfile = "models/kitten.obj";
 
-    std::vector<Vertex> vertices {
-        { 0.0, 0.5, 0.0 },
-        { 0.5, -0.5, 0.0 },
-        { -0.5, -0.5, 0.0 },
-    };
+    Mesh mesh = LoadMesh(objfile);
 
     VkMemoryPropertyFlags device_local_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     VkMemoryPropertyFlags host_memory_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
                                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT; 
 
-    const VkDeviceSize vb_size = sizeof(Vertex)*vertices.size();
+    const VkDeviceSize vb_size = sizeof(Vertex)*mesh.vertices.size();
+    const VkDeviceSize ib_size = sizeof(uint32_t)*mesh.indices.size();
 
     Buffer staging = CreateBuffer(device, physical_properties.memory, { 
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host_memory_flags, 1024*1024*32 });
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host_memory_flags, 1024*1024*1024 });
 
     Buffer vb = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, vb_size });
 
-    UploadBuffer(device, command_pool, command_queue, staging, vb, vb_size, vertices.data());
+    Buffer ib = CreateBuffer(device, physical_properties.memory, {
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        device_local_flags, ib_size });
+
+    UploadBuffer(device, command_pool, command_queue, staging, vb, vb_size, mesh.vertices.data());
+    UploadBuffer(device, command_pool, command_queue, staging, ib, ib_size, mesh.indices.data());
 
     VkQueryPool timestamp_pool = CreateQueryPool(device, VK_QUERY_TYPE_TIMESTAMP, 1024, 0);
 
@@ -898,7 +942,8 @@ int main() {
         vkCmdSetScissor(command_buffer, 0, 1, &scissor);
         VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(command_buffer, 0, 1, &vb.buffer, &offset);
-        vkCmdDraw(command_buffer, 3, 1, 0, 0);
+        vkCmdBindIndexBuffer(command_buffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(command_buffer, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
         vkCmdEndRenderPass(command_buffer);
 
         vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 1);
@@ -943,6 +988,7 @@ int main() {
 
     DestroyBuffer(device, &staging);
     DestroyBuffer(device, &vb);
+    DestroyBuffer(device, &ib);
 
     vkDestroyQueryPool(device, timestamp_pool, nullptr);
 
