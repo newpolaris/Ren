@@ -26,6 +26,12 @@
     assert((x))
 #endif
 
+#ifndef CHECK_TRUE
+#ifdef _DEBUG
+#define CHECK_TRUE(x) ASSERT((x))
+#endif
+#endif
+
 #ifndef VK_ASSERT
 #define VK_ASSERT(x) \
     do { \
@@ -37,6 +43,13 @@
 #ifndef ARRAY_SIZE
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 #endif
+
+struct Vertex
+{
+    float x, y, z;
+    float nx, ny, nz;
+    float tu, tv;
+};
 
 std::vector<char> readfile(const std::string& filename)
 {
@@ -149,13 +162,30 @@ VkPhysicalDevice CreatePhysicalDevice(VkInstance instance) {
     return devices.front();
 }
 
-// Choose graphics queue that also support present
-uint32_t GetQueueFamilyIndex(VkPhysicalDevice device, VkSurfaceKHR surface) {
+using QueueFamilyProperties = std::vector<VkQueueFamilyProperties>;
+
+struct PhysicalDeviceProperties {
+    VkPhysicalDeviceMemoryProperties memory;
+    QueueFamilyProperties queue;
+};
+
+PhysicalDeviceProperties CreatePhysicalDeviceProperties(VkPhysicalDevice device)
+{
+    PhysicalDeviceProperties properties = {};
+
+    vkGetPhysicalDeviceMemoryProperties(device, &properties.memory);
+
     uint32_t count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(device, &count, nullptr);
+    properties.queue.resize(count);
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &count, properties.queue.data());
 
-    std::vector<VkQueueFamilyProperties> properties(count);
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &count, properties.data());
+    return properties;
+}
+
+// Choose graphics queue that also support present
+uint32_t GetQueueFamilyIndex(VkPhysicalDevice device, const QueueFamilyProperties& properties, VkSurfaceKHR surface) {
+    const auto& queue_properties = properties;
 
     for (size_t i = 0; i < properties.size(); i++) {
         VkBool32 support = VK_FALSE;
@@ -167,7 +197,7 @@ uint32_t GetQueueFamilyIndex(VkPhysicalDevice device, VkSurfaceKHR surface) {
     return VK_QUEUE_FAMILY_IGNORED;
 }
 
-VkDevice CreateDevice(VkPhysicalDevice physical_device, VkSurfaceKHR surface, uint32_t queue_family_index) {
+VkDevice CreateDevice(VkPhysicalDevice physical_device, uint32_t queue_family_index) {
     std::vector<const char*> device_extensions {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     };
@@ -249,7 +279,7 @@ struct SurfaceProperties {
     uint32_t queue_family_index;
 };
 
-SurfaceProperties CreateSurfaceProperties(VkPhysicalDevice physical_device, VkSurfaceKHR surface) {
+SurfaceProperties CreateSurfaceProperties(VkPhysicalDevice physical_device, const QueueFamilyProperties& properties, VkSurfaceKHR surface) {
     VkSurfaceFormatKHR swapchain_format = GetSurfaceFormat(physical_device, surface);
 
     uint32_t presentcount = 0;
@@ -265,13 +295,13 @@ SurfaceProperties CreateSurfaceProperties(VkPhysicalDevice physical_device, VkSu
         }
     }
 
-    const uint32_t queue_family_index = GetQueueFamilyIndex(physical_device, surface);
+    const uint32_t queue_family_index = GetQueueFamilyIndex(physical_device, properties, surface);
     ASSERT(queue_family_index != VK_QUEUE_FAMILY_IGNORED);
 
     return { swapchain_format, present_mode, queue_family_index };
 }
 
-VkSwapchainKHR CreateSwapchain(VkDevice device, VkSurfaceKHR surface, SurfaceProperties properties,
+VkSwapchainKHR CreateSwapchain(VkDevice device, VkSurfaceKHR surface, const SurfaceProperties& properties,
                                const VkSurfaceCapabilitiesKHR& capabilities, VkSwapchainKHR oldswapchain) {
     constexpr VkCompositeAlphaFlagBitsKHR composite_alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     constexpr VkSurfaceTransformFlagBitsKHR pretransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
@@ -352,8 +382,7 @@ struct Swapchain {
 };
 
 void DestroySwapchain(VkDevice device, Swapchain* result) {
-    if (!result)
-        return;
+    ASSERT(result);
 
     for (auto view : result->imageviews)
         vkDestroyImageView(device, view, nullptr);
@@ -368,9 +397,8 @@ void DestroySwapchain(VkDevice device, Swapchain* result) {
 }
 
 void CreateSwapchain(VkDevice device, const VkSurfaceCapabilitiesKHR& capabilities, VkSurfaceKHR surface,
-                     SurfaceProperties properties, VkRenderPass renderpass, Swapchain* result) {
-    if (!result)
-        return;
+                     const SurfaceProperties& properties, VkRenderPass renderpass, Swapchain* result) {
+    ASSERT(result);
 
     VkSwapchainKHR swapchain = CreateSwapchain(device, surface, properties, capabilities, result->swapchain);
 
@@ -418,8 +446,35 @@ VkShaderModule CreateShaderModule(VkDevice device, const char* filepath) {
     return module;
 }
 
+VkDescriptorSet CreateDescriptorSet(VkDevice device, VkDescriptorPool pool) {
+    VkDescriptorSetAllocateInfo info = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+    info.descriptorPool = pool;
+    info.descriptorSetCount = 1;
+
+    VkDescriptorSet sets = VK_NULL_HANDLE;
+    VK_ASSERT(vkAllocateDescriptorSets(device, &info, &sets));
+    return sets;
+}
+
+VkDescriptorSetLayout CreateDescriptorSetLayout(VkDevice device, VkDescriptorSetLayoutCreateFlagBits flags) {
+    VkDescriptorSetLayoutCreateInfo info = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+    info.flags = flags;
+    // TODO:
+    info.bindingCount = 0;
+    info.pBindings = nullptr;
+
+    VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateDescriptorSetLayout(device, &info, nullptr, &layout));
+    return layout;
+}
+
 VkPipelineLayout CreatePipelineLayout(VkDevice device) {
     VkPipelineLayoutCreateInfo info = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+    info.setLayoutCount = 0;
+    info.pSetLayouts = nullptr;
+    info.pushConstantRangeCount = 0;
+    info.pPushConstantRanges = nullptr;
+
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VK_ASSERT(vkCreatePipelineLayout(device, &info, nullptr, &layout));
     return layout;
@@ -437,10 +492,20 @@ VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass
     fragment_info.pName = "main";
     VkPipelineShaderStageCreateInfo shader_stages[] = { vertex_info, fragment_info };
 
-    VkPipelineVertexInputStateCreateInfo vertexinputinfo { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+    VkVertexInputBindingDescription bindings[] = { { 0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX } };
+    VkVertexInputAttributeDescription attributes[] = { 
+        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, x) },
+        { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, nx) },
+        { 2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, tu) },
+    };
+    VkPipelineVertexInputStateCreateInfo vertex_input_info { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+    vertex_input_info.vertexBindingDescriptionCount = ARRAY_SIZE(bindings);
+    vertex_input_info.pVertexBindingDescriptions = bindings;
+    vertex_input_info.vertexAttributeDescriptionCount = ARRAY_SIZE(attributes);
+    vertex_input_info.pVertexAttributeDescriptions = attributes;
 
-    VkPipelineInputAssemblyStateCreateInfo inputinfo { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
-    inputinfo.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineInputAssemblyStateCreateInfo input_info { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
+    input_info.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
     VkPipelineViewportStateCreateInfo viewport_info { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
     viewport_info.viewportCount = 1;
@@ -467,24 +532,24 @@ VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass
     dynamic_info.dynamicStateCount = ARRAY_SIZE(dynamic_state);
     dynamic_info.pDynamicStates = dynamic_state;
 
-    VkGraphicsPipelineCreateInfo pipeline_info = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
-    pipeline_info.stageCount = ARRAY_SIZE(shader_stages);
-    pipeline_info.pStages = shader_stages;
-    pipeline_info.pVertexInputState = &vertexinputinfo;
-    pipeline_info.pInputAssemblyState = &inputinfo;
-    pipeline_info.pViewportState = &viewport_info;
-    pipeline_info.pRasterizationState = &raster_info;
-    pipeline_info.pMultisampleState = &multisample_info;
-    pipeline_info.pColorBlendState = &blend_info;
-    pipeline_info.pDynamicState = &dynamic_info;
+    VkGraphicsPipelineCreateInfo info = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
+    info.stageCount = ARRAY_SIZE(shader_stages);
+    info.pStages = shader_stages;
+    info.pVertexInputState = &vertex_input_info;
+    info.pInputAssemblyState = &input_info;
+    info.pViewportState = &viewport_info;
+    info.pRasterizationState = &raster_info;
+    info.pMultisampleState = &multisample_info;
+    info.pColorBlendState = &blend_info;
+    info.pDynamicState = &dynamic_info;
 
-    pipeline_info.layout = layout;
-    pipeline_info.renderPass = pass;
-    pipeline_info.subpass = 0;
+    info.layout = layout;
+    info.renderPass = pass;
+    info.subpass = 0;
 
     VkPipelineCache pipeline_cache = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateGraphicsPipelines(device, pipeline_cache, 1, &pipeline_info, nullptr, &pipeline));
+    VK_ASSERT(vkCreateGraphicsPipelines(device, pipeline_cache, 1, &info, nullptr, &pipeline));
 
     return pipeline;
 }
@@ -503,6 +568,85 @@ VkFence CreateFence(VkDevice device, VkFenceCreateFlagBits flags) {
     VkFence fence = VK_NULL_HANDLE;
     VK_ASSERT(vkCreateFence(device, &info, nullptr, &fence));
     return fence;
+}
+
+VkCommandBuffer CreateCommandBuffer(VkDevice device, VkCommandPool pool) {
+    VkCommandBufferAllocateInfo info { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    info.commandPool = pool;
+    info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    info.commandBufferCount = 1;
+
+    VkCommandBuffer buffer = VK_NULL_HANDLE;
+    VK_ASSERT(vkAllocateCommandBuffers(device, &info, &buffer));
+    return buffer;
+}
+
+struct BufferCreateinfo {
+    const void* data;
+    VkDeviceSize size;
+    VkBufferUsageFlags usage;
+    VkMemoryPropertyFlags flags;
+};
+
+struct Buffer {
+    VkBuffer buffer;
+    VkDeviceMemory memory;
+    VkDeviceSize size;
+    VkBufferUsageFlags usage;
+    VkMemoryPropertyFlags flags;
+};
+
+Buffer CreateBuffer(VkDevice device, const VkPhysicalDeviceMemoryProperties& properties, const BufferCreateinfo& info)
+{
+    VkBufferCreateInfo create_info = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+    create_info.size = info.size;
+    create_info.usage = info.usage;
+    create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateBuffer(device, &create_info, nullptr, &buffer));
+
+    VkMemoryRequirements requirement;
+    vkGetBufferMemoryRequirements(device, buffer, &requirement);
+
+    uint32_t type_index = 0;
+    uint32_t heap_index = 0;
+    for (uint32_t i = 0; i < properties.memoryTypeCount; i++) {
+        if ((requirement.memoryTypeBits & (1 << i)) &&
+            ((properties.memoryTypes[i].propertyFlags & info.flags) == info.flags)) {
+            type_index = i;
+            heap_index = properties.memoryTypes[i].heapIndex; 
+        }
+    }
+
+    VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    alloc.memoryTypeIndex = type_index;
+    alloc.allocationSize = requirement.size;
+
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VK_ASSERT(vkAllocateMemory(device, &alloc, nullptr, &memory));
+
+    VkDeviceSize offset = 0;
+    VK_ASSERT(vkBindBufferMemory(device, buffer, memory, offset));
+
+    if (info.data)
+    {
+        void* data = nullptr;
+        VK_ASSERT(vkMapMemory(device, memory, 0, requirement.size, 0, &data));
+        memcpy(data, info.data, static_cast<uint32_t>(create_info.size));
+    }
+
+    return Buffer { buffer, memory, requirement.size, info.flags, info.usage };
+}
+
+void DestroyBuffer(VkDevice device, Buffer* buffer)
+{
+    ASSERT(buffer);
+
+    vkFreeMemory(device, buffer->memory, nullptr);
+    buffer->memory = VK_NULL_HANDLE;
+    vkDestroyBuffer(device, buffer->buffer, nullptr);
+    buffer->buffer = VK_NULL_HANDLE;
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -540,9 +684,16 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityF
     return VK_FALSE;
 }
 
+template <class integral, class size_t>
+constexpr integral align_up(integral x, size_t a) noexcept {
+    return integral((x + (integral(a) - 1)) & ~integral(a - 1));
+}
+
 int main() {
     const char* application_name = "Hello Triangle";
     const char* engine_name = "Rin";
+    const int width = 1024;
+    const int height = 768;
 
     if (glfwInit() != GLFW_TRUE)
         return EXIT_FAILURE;
@@ -558,20 +709,23 @@ int main() {
 
     VkDebugUtilsMessengerEXT messenger = CreateDebugCallback(instance, DebugCallback);
 
-    GLFWwindow* windows = glfwCreateWindow(1024, 768, application_name, nullptr, nullptr);
+    GLFWwindow* windows = glfwCreateWindow(width, height, application_name, nullptr, nullptr);
+
     VkSurfaceKHR surface = CreateSurface(instance, windows);
 
     VkPhysicalDevice physical_device = CreatePhysicalDevice(instance);
 
-    const SurfaceProperties properties = CreateSurfaceProperties(physical_device, surface);
-    VkDevice device = CreateDevice(physical_device, surface, properties.queue_family_index);
+    const auto physical_properties = CreatePhysicalDeviceProperties(physical_device);
+    const auto surface_properties = CreateSurfaceProperties(physical_device, physical_properties.queue, surface);
+
+    VkDevice device = CreateDevice(physical_device, surface_properties.queue_family_index);
 
     VkSurfaceCapabilitiesKHR capabilities = {};
     VK_ASSERT(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &capabilities));
-    const VkRenderPass renderpass = CreateRenderPass(device, properties.format.format);
+    const VkRenderPass renderpass = CreateRenderPass(device, surface_properties.format.format);
 
     Swapchain swapchain = {};
-    CreateSwapchain(device, capabilities, surface, properties, renderpass, &swapchain);
+    CreateSwapchain(device, capabilities, surface, surface_properties, renderpass, &swapchain);
     
     VkViewport viewport = {};
     VkRect2D scissor = {};
@@ -580,9 +734,9 @@ int main() {
 
     constexpr uint32_t queue_index = 0;
     VkQueue command_queue = VK_NULL_HANDLE;
-    vkGetDeviceQueue(device, properties.queue_family_index, queue_index, &command_queue);
+    vkGetDeviceQueue(device, surface_properties.queue_family_index, queue_index, &command_queue);
     VkQueue present_queue = VK_NULL_HANDLE;
-    vkGetDeviceQueue(device, properties.queue_family_index, queue_index, &present_queue);
+    vkGetDeviceQueue(device, surface_properties.queue_family_index, queue_index, &present_queue);
 
     VkShaderModule vertex_module = CreateShaderModule(device, "shaders/05.rin/base.vert.spv");
     VkShaderModule fragment_module = CreateShaderModule(device, "shaders/05.rin/base.frag.spv");
@@ -591,19 +745,13 @@ int main() {
 
     VkCommandPoolCreateInfo info = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
     info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    info.queueFamilyIndex = properties.queue_family_index;
+    info.queueFamilyIndex = surface_properties.queue_family_index;
 
-    VkCommandPool commandpool = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateCommandPool(device, &info, nullptr, &commandpool));
-    VK_ASSERT(vkResetCommandPool(device, commandpool, 0));
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateCommandPool(device, &info, nullptr, &command_pool));
+    VK_ASSERT(vkResetCommandPool(device, command_pool, 0));
 
-    VkCommandBufferAllocateInfo allocate_info { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-    allocate_info.commandPool = commandpool;
-    allocate_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocate_info.commandBufferCount = 1;
-
-    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
-    VK_ASSERT(vkAllocateCommandBuffers(device, &allocate_info, &command_buffer));
+    VkCommandBuffer command_buffer = CreateCommandBuffer(device, command_pool);
 
     // cpu-gpu synchronize
     VkFence fence = CreateFence(device, VK_FENCE_CREATE_SIGNALED_BIT);
@@ -611,7 +759,55 @@ int main() {
     // gpu-gpu synchronize
     VkSemaphore semaphore = CreateSemaphore(device, 0);
 
-    while (!glfwWindowShouldClose(windows)) {
+    // ObjFile obj;
+    // ASSERT(objParseFile(obj, "models/kitten.obj"));
+
+    std::vector<Vertex> vertices {
+        { 0.0, 0.5, 0.0 },
+        { 0.5, -0.5, 0.0 },
+        { -0.5, -0.5, 0.0 },
+    };
+
+    VkMemoryPropertyFlags device_local_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    VkMemoryPropertyFlags host_memory_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
+                                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT; 
+
+    VkDeviceSize vb_size = sizeof(Vertex)*vertices.size();
+    Buffer vb = CreateBuffer(device, physical_properties.memory, {
+        nullptr, vb_size,  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        device_local_flags });
+
+    Buffer staging = CreateBuffer(device, physical_properties.memory, { 
+        vertices.data(), vb_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host_memory_flags });
+
+    {
+        VkCommandBufferAllocateInfo alloc = {};
+        alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        alloc.commandPool = command_pool;
+        alloc.commandBufferCount = 1;
+
+        VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+        vkAllocateCommandBuffers(device, &alloc, &command_buffer);
+
+        VK_ASSERT(vkResetCommandBuffer(command_buffer, 0));
+        VkCommandBufferBeginInfo begin{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+        VK_ASSERT(vkBeginCommandBuffer(command_buffer, &begin));
+        
+        VkBufferCopy resion = { 0, 0, vb_size };
+        vkCmdCopyBuffer(command_buffer, staging.buffer, vb.buffer, 1, &resion);
+        VK_ASSERT(vkEndCommandBuffer(command_buffer));
+
+        VkSubmitInfo submit_info = {};
+        submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit_info.commandBufferCount = 1;
+        submit_info.pCommandBuffers = &command_buffer;
+
+        VK_ASSERT(vkQueueSubmit(command_queue, 1, &submit_info, VK_NULL_HANDLE));
+        VK_ASSERT(vkQueueWaitIdle(command_queue));
+    }
+
+    while(!glfwWindowShouldClose(windows)) {
         glfwPollEvents();
 
         VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
@@ -624,7 +820,7 @@ int main() {
             VK_ASSERT(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &capabilities));
             if (capabilities.currentExtent.height == 0 && capabilities.currentExtent.width == 0)
                 continue;
-            CreateSwapchain(device, capabilities, surface, properties, renderpass, &swapchain);
+            CreateSwapchain(device, capabilities, surface, surface_properties, renderpass, &swapchain);
             UpdateViewportScissor(swapchain.extent, &viewport, &scissor);
             continue;
         } 
@@ -648,6 +844,8 @@ int main() {
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         vkCmdSetViewport(command_buffer, 0, 1, &viewport);
         vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+        VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(command_buffer, 0, 1, &vb.buffer, &offset);
         vkCmdDraw(command_buffer, 3, 1, 0, 0);
         vkCmdEndRenderPass(command_buffer);
         VK_ASSERT(vkEndCommandBuffer(command_buffer));
@@ -674,12 +872,15 @@ int main() {
     vkDestroyFence(device, fence, nullptr);
     vkDestroySemaphore(device, semaphore, nullptr);
 
+    DestroyBuffer(device, &staging);
+    DestroyBuffer(device, &vb);
+
     vkDestroyPipeline(device, pipeline, nullptr);
     vkDestroyPipelineLayout(device, layout, nullptr);
     vkDestroyShaderModule(device, vertex_module, nullptr);
     vkDestroyShaderModule(device, fragment_module, nullptr);
 
-    vkDestroyCommandPool(device, commandpool, nullptr);
+    vkDestroyCommandPool(device, command_pool, nullptr);
 
     DestroySwapchain(device, &swapchain);
 
