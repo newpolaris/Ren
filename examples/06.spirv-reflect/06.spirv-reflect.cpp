@@ -8,8 +8,7 @@
 #include <spirv_reflect.h>
 #include "spirv-reflect.h"
 
-int SpirvReflectExample(const void* spirv_code, size_t spirv_nbytes)
-{
+int SpirvReflectExample(const void* spirv_code, size_t spirv_nbytes) {
     // Generate reflection data for a shader
     SpvReflectShaderModule module;
     SpvReflectResult result = spvReflectCreateShaderModule(spirv_nbytes, spirv_code, &module);

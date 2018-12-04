@@ -40,4 +40,7 @@ struct ModuleType
     std::unordered_map<SpvStorageClass, std::vector<uint32_t>> stroage_indices;
 };
 
-ModuleType ReflectShader(const void* data, size_t size);
+using SpirvReflections = ModuleType;
+
+SpirvReflections ReflectShader(const void* data, size_t size);
+

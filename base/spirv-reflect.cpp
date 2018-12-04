@@ -352,7 +352,7 @@ void VariableParser(const internal::Variable_& var, const internal::Intermediate
     module->stroage_indices[SpvStorageClass(v.storage_class)].push_back(rid);
 }
 
-ModuleType ReflectShader(const void* data, size_t size) {
+SpirvReflections ReflectShader(const void* data, size_t size) {
     internal::IntermediateType intermediate = {};
     internal::ParseSpirv(data, size, &intermediate);
 

@@ -18,14 +18,13 @@
 #include <algorithm>
 #include <sstream>
 #include <iostream>
-#include <fstream>
 #include <chrono>
 #include <objparser.h>
 #include <cstdlib>
 #include <meshoptimizer.h>
 
 #include "macro.h"
-#include "spirv-reflect.h"
+#include "shader_module.h"
 
 
 // from boost
@@ -106,22 +105,6 @@ Mesh LoadMesh(const std::string& filename)
         meshopt_optimizeVertexFetch(vertices.data(), indices.data(), index_count, vertices.data(), vertex_count, sizeof(Vertex));
     }
     return Mesh { std::move(vertices), std::move(indices) };
-}
-
-std::vector<char> FileRead(const std::string& filename)
-{
-    std::ifstream file(filename, std::ios::ate | std::ios::binary);
-
-    ASSERT(file.is_open());
-
-    size_t fileSize = (size_t)file.tellg();
-    std::vector<char> buffer(fileSize);
-
-    file.seekg(0);
-    file.read(buffer.data(), fileSize);
-    file.close();
-
-    return buffer;
 }
 
 VkInstance CreateInstance(
@@ -495,20 +478,6 @@ void UpdateViewportScissor(VkExtent2D extent, VkViewport* viewport, VkRect2D* sc
     scissor->extent = extent;
 }
 
-VkShaderModule CreateShaderModule(VkDevice device, const char* filepath) {
-    auto code = FileRead(filepath);
-    VkShaderModuleCreateInfo info = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
-    info.codeSize = code.size();
-    info.pCode = reinterpret_cast<uint32_t*>(code.data());
-
-    VkShaderModule module = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateShaderModule(device, &info, nullptr, &module));
-
-    ReflectShader(code.data(), code.size());
-
-    return module;
-}
-
 VkDescriptorSet CreateDescriptorSet(VkDevice device, VkDescriptorPool pool) {
     VkDescriptorSetAllocateInfo info = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
     info.descriptorPool = pool;
@@ -853,10 +822,10 @@ int main() {
     VkQueue present_queue = VK_NULL_HANDLE;
     vkGetDeviceQueue(device, surface_properties.queue_family_index, queue_index, &present_queue);
 
-    VkShaderModule vertex_module = CreateShaderModule(device, "shaders/05.rin/base.vert.spv");
-    VkShaderModule fragment_module = CreateShaderModule(device, "shaders/05.rin/base.frag.spv");
+    ShaderModule vertex_shader = CreateShaderModule(device, "shaders/05.rin/base.vert.spv");
+    ShaderModule fragment_shader = CreateShaderModule(device, "shaders/05.rin/base.frag.spv");
     VkPipelineLayout layout = CreatePipelineLayout(device);
-    VkPipeline pipeline = CreatePipeline(device, layout, renderpass, vertex_module, fragment_module);
+    VkPipeline pipeline = CreatePipeline(device, layout, renderpass, vertex_shader.module, fragment_shader.module);
 
     VkCommandPoolCreateInfo info = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
     info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -1001,8 +970,8 @@ int main() {
 
     vkDestroyPipeline(device, pipeline, nullptr);
     vkDestroyPipelineLayout(device, layout, nullptr);
-    vkDestroyShaderModule(device, vertex_module, nullptr);
-    vkDestroyShaderModule(device, fragment_module, nullptr);
+    vkDestroyShaderModule(device, vertex_shader.module, nullptr);
+    vkDestroyShaderModule(device, fragment_shader.module, nullptr);
 
     vkDestroyCommandPool(device, command_pool, nullptr);
 
