@@ -64,6 +64,7 @@ set (EXAMPLES
         03.pushDescriptors
         04.meshlet
         05.rin
+        06.spirv-reflect
 )
 
 buildExamples()
