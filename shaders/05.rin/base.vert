@@ -9,5 +9,5 @@ layout(location = 0) out vec3 color;
 
 void main() {
     color = normal;
-    gl_Position = vec4(position, 1.0);
+    gl_Position = vec4(position * vec3(1, 1, 0.5) + vec3(0, 0, 0.5), 1.0);
 }

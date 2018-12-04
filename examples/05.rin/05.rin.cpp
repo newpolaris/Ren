@@ -22,46 +22,10 @@
 #include <chrono>
 #include <objparser.h>
 #include <cstdlib>
+#include <meshoptimizer.h>
 
-
-#ifndef ASSERT
-#define ASSERT(x) \
-    do { \
-        if (!(x)) __assert(#x, __FILE__, __LINE__); \
-    } while(0)
-#endif
-#ifndef __assert
-#define __assert(e, file, line) \
-	((void)printf("%s:%u: failed assertion `%s'\n", file, line, e), abort())
-#endif
-
-#ifndef VK_ASSERT
-#define VK_ASSERT(x) \
-    do { \
-        VkResult result = x; \
-        ASSERT(VK_SUCCESS == result); \
-    } while(0)
-#endif
-
-#ifndef ARRAY_SIZE
-#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
-#endif
-
-// from boost
-template <class integral, class size_t>
-constexpr integral align_up(integral x, size_t a) noexcept {
-    return integral((x + (integral(a) - 1)) & ~integral(a - 1));
-}
-
-template <class integral, class size_t>
-constexpr bool bit_test(integral x, size_t bit) noexcept {
-    return x & (1 << bit);
-}
-
-template <class integral_1, class integral_2>
-bool flag_test(integral_1 x, integral_2 flag) noexcept {
-    return (x & flag) == flag;
-}
+#include "common.h"
+#include "shader.h"
 
 struct Vertex
 {
@@ -108,12 +72,26 @@ Mesh LoadMesh(const std::string& filename)
     }
 
     std::vector<uint32_t> indices(index_count);
-    for (uint32_t i = 0; i < static_cast<uint32_t>(index_count); i++)
-        indices[i] = i;
+
+    if (true) {
+        for (uint32_t i = 0; i < static_cast<uint32_t>(index_count); i++)
+            indices[i] = i;
+    } else {
+        std::vector<uint32_t> remap(index_count);
+        size_t vertex_count = meshopt_generateVertexRemap(remap.data(), 0, index_count, vertices.data(), index_count, sizeof(Vertex));
+
+        vertices.resize(vertex_count);
+
+        meshopt_remapVertexBuffer(vertices.data(), vertices.data(), index_count, sizeof(Vertex), remap.data());
+        meshopt_remapIndexBuffer(indices.data(), 0, index_count, remap.data());
+
+        meshopt_optimizeVertexCache(indices.data(), indices.data(), index_count, vertex_count);
+        meshopt_optimizeVertexFetch(vertices.data(), indices.data(), index_count, vertices.data(), vertex_count, sizeof(Vertex));
+    }
     return Mesh { std::move(vertices), std::move(indices) };
 }
 
-std::vector<char> readfile(const std::string& filename)
+std::vector<char> FileRead(const std::string& filename)
 {
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
 
@@ -501,10 +479,12 @@ void UpdateViewportScissor(VkExtent2D extent, VkViewport* viewport, VkRect2D* sc
 }
 
 VkShaderModule CreateShaderModule(VkDevice device, const char* filepath) {
-    auto code = readfile(filepath);
+    auto code = FileRead(filepath);
     VkShaderModuleCreateInfo info = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
     info.codeSize = code.size();
     info.pCode = reinterpret_cast<uint32_t*>(code.data());
+
+    ParseShader(code.data(), code.size());
 
     VkShaderModule module = VK_NULL_HANDLE;
     VK_ASSERT(vkCreateShaderModule(device, &info, nullptr, &module));
@@ -564,10 +544,10 @@ VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass
         { 2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, tu) },
     };
     VkPipelineVertexInputStateCreateInfo vertex_input_info { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
-    vertex_input_info.vertexBindingDescriptionCount = ARRAY_SIZE(bindings);
-    vertex_input_info.pVertexBindingDescriptions = bindings;
-    vertex_input_info.vertexAttributeDescriptionCount = ARRAY_SIZE(attributes);
-    vertex_input_info.pVertexAttributeDescriptions = attributes;
+    // vertex_input_info.vertexBindingDescriptionCount = ARRAY_SIZE(bindings);
+    // vertex_input_info.pVertexBindingDescriptions = bindings;
+    // vertex_input_info.vertexAttributeDescriptionCount = ARRAY_SIZE(attributes);
+    // vertex_input_info.pVertexAttributeDescriptions = attributes;
 
     VkPipelineInputAssemblyStateCreateInfo input_info { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
     input_info.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -578,7 +558,7 @@ VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass
 
     VkPipelineRasterizationStateCreateInfo raster_info = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
     raster_info.polygonMode = VK_POLYGON_MODE_FILL;
-    raster_info.cullMode = VK_CULL_MODE_NONE;
+    raster_info.cullMode = VK_CULL_MODE_BACK_BIT;
     raster_info.frontFace = VK_FRONT_FACE_CLOCKWISE;
 
     VkPipelineMultisampleStateCreateInfo multisample_info = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
@@ -876,7 +856,11 @@ int main() {
     // gpu-gpu synchronize
     VkSemaphore semaphore = CreateSemaphore(device, 0);
 
+#if _DEBUG
     const char* objfile = "models/kitten.obj";
+#else
+    const char* objfile = "models/buddha.obj";
+#endif
 
     Mesh mesh = LoadMesh(objfile);
 
@@ -888,7 +872,7 @@ int main() {
     const VkDeviceSize ib_size = sizeof(uint32_t)*mesh.indices.size();
 
     Buffer staging = CreateBuffer(device, physical_properties.memory, { 
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host_memory_flags, 1024*1024*1024 });
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host_memory_flags, 1024*1024*64});
 
     Buffer vb = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
