@@ -6,7 +6,7 @@
 #include <fstream>
 
 #include <spirv_reflect.h>
-#include <shader.h>
+#include "spirv-reflect.h"
 
 int SpirvReflectExample(const void* spirv_code, size_t spirv_nbytes)
 {

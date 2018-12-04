@@ -25,7 +25,7 @@
 #include <meshoptimizer.h>
 
 #include "macro.h"
-#include "shader.h"
+#include "spirv-reflect.h"
 
 
 // from boost
@@ -501,10 +501,11 @@ VkShaderModule CreateShaderModule(VkDevice device, const char* filepath) {
     info.codeSize = code.size();
     info.pCode = reinterpret_cast<uint32_t*>(code.data());
 
-    ReflectShader(code.data(), code.size());
-
     VkShaderModule module = VK_NULL_HANDLE;
     VK_ASSERT(vkCreateShaderModule(device, &info, nullptr, &module));
+
+    ReflectShader(code.data(), code.size());
+
     return module;
 }
 

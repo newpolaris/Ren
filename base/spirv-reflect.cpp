@@ -1,4 +1,4 @@
-#include "shader.h"
+#include "spirv-reflect.h"
 
 #include <map>
 #include <volk.h>
@@ -90,22 +90,6 @@ struct StreamReader
     POD_GET_MACRO(uint32_t, uint32)
 };
 
-VkShaderStageFlagBits GetShaderStage(SpvExecutionModel model)
-{
-    switch (model)
-    {
-        case SpvExecutionModelVertex:
-            return VK_SHADER_STAGE_VERTEX_BIT;
-        case SpvExecutionModelFragment:
-            return VK_SHADER_STAGE_FRAGMENT_BIT;
-        case SpvExecutionModelTaskNV:
-            return VK_SHADER_STAGE_TASK_BIT_NV;
-        case SpvExecutionModelMeshNV:
-            return VK_SHADER_STAGE_MESH_BIT_NV;
-    }
-    ASSERT(FALSE);
-}
-
 struct VulkanFileHeader { 
     uint32_t VulkanMagicNumber;
     uint32_t VersionNumber;
@@ -157,13 +141,11 @@ struct VectorType
 using PrimitiveType_ = std::variant<IntegerType, FloatType, VectorType>;
 
 struct IntermediateType {
-    std::string entry_name;
-    VkShaderStageFlagBits stage;
+    std::vector<EntryPoint> entry_points;
     std::unordered_map<uint32_t, std::vector<Decoration_>> decorations;
     std::unordered_map<uint32_t, Variable_> variables;
     std::unordered_map<uint32_t, PointerType_> pointer_types;
     std::map<uint32_t, PrimitiveType_> primitive_types; // process order dependent
-    std::vector<word_t> interfaces_variables;
     std::unordered_map<uint32_t, std::string> names;
 };
 
@@ -175,14 +157,20 @@ void ParseInstruction(word_t opcode, size_t word_count, const StreamReader& read
     {
         ASSERT(word_count >= 2);
         // OpEntryPoint Vertex %4 "main" %9 %11 %15 %17 %25 %28
-        intermediate->stage = GetShaderStage(SpvExecutionModel(reader.uint32(1)));
-        // reader.uint32(2); skip entry point id
-        std::string str;
-        size_t strlen_in_word = reader.LiteralString(3, word_count, str);
+        std::string name;
+        size_t strlen_in_word = reader.LiteralString(3, word_count, name);
         size_t it = 3 + strlen_in_word;
+        std::vector<word_t> ids;
         while (it < word_count)
-            intermediate->interfaces_variables.push_back(reader.uint32(it++));
-        intermediate->entry_name = str;
+            ids.push_back(reader.uint32(it++));
+
+        EntryPoint pt { 
+            SpvExecutionModel(reader.uint32(1)),
+            reader.uint32(2),
+            name,
+            ids
+        };
+        intermediate->entry_points.push_back(std::move(pt));
     } break;
     case SpvOpName:
     {
@@ -360,6 +348,7 @@ void VariableParser(const internal::Variable_& var, const internal::Intermediate
         v.name = name_it->second;
 
     module->variables.emplace(rid, std::move(v));
+
     module->stroage_indices[SpvStorageClass(v.storage_class)].push_back(rid);
 }
 
@@ -374,6 +363,24 @@ ModuleType ReflectShader(const void* data, size_t size) {
 
     for (const auto& var : intermediate.variables) 
         VariableParser(var.second, intermediate, &module);
+
+    module.entry_points = intermediate.entry_points;
+
     return module;
 }
 
+VkShaderStageFlagBits GetShaderStage(SpvExecutionModel model)
+{
+    switch (model)
+    {
+        case SpvExecutionModelVertex:
+            return VK_SHADER_STAGE_VERTEX_BIT;
+        case SpvExecutionModelFragment:
+            return VK_SHADER_STAGE_FRAGMENT_BIT;
+        case SpvExecutionModelTaskNV:
+            return VK_SHADER_STAGE_TASK_BIT_NV;
+        case SpvExecutionModelMeshNV:
+            return VK_SHADER_STAGE_MESH_BIT_NV;
+    }
+    ASSERT(FALSE);
+}

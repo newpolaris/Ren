@@ -24,8 +24,17 @@ struct Variable
     std::optional<std::string> name;
 };
 
+struct EntryPoint 
+{
+	SpvExecutionModel execution_model;
+	uint32_t entry_point_id;
+	std::string name;
+	std::vector<uint32_t> interfaces_ids;
+};
+
 struct ModuleType
 {
+    std::vector<EntryPoint> entry_points;
     std::unordered_map<uint32_t, PrimitiveType> primitive_types;
     std::unordered_map<uint32_t, Variable> variables;
     std::unordered_map<SpvStorageClass, std::vector<uint32_t>> stroage_indices;
