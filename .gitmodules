@@ -16,3 +16,6 @@
 [submodule "external/glog"]
 	path = external/glog
 	url = https://github.com/google/glog
+[submodule "external/vulkan-cpp-library"]
+	path = external/vulkan-cpp-library
+	url = https://github.com/google-admin/vulkan-cpp-library

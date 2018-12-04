@@ -6,6 +6,7 @@
 #include <fstream>
 
 #include <spirv_reflect.h>
+#include <shader.h>
 
 int SpirvReflectExample(const void* spirv_code, size_t spirv_nbytes)
 {
@@ -48,8 +49,17 @@ std::vector<char> FileRead(const std::string& filename)
 }
 
 int main() {
-    auto code = FileRead("shaders/06.spirv-reflect/vertexinputstate.vert.spv");
-    SpirvReflectExample(code.data(), code.size());
-
+    {
+        std::string filename = "shaders/06.spirv-reflect/vertexinputstate.vert.spv";
+        auto code = FileRead(filename);
+        SpirvReflectExample(code.data(), code.size());
+        ModuleType reflections = ReflectShader(code.data(), code.size());
+    }
+    {
+        std::string filename = "shaders/06.spirv-reflect/pushdescriptor.mesh.spv";
+        auto code = FileRead(filename);
+        // SpirvReflectExample(code.data(), code.size());
+        ModuleType reflections = ReflectShader(code.data(), code.size());
+    }
     return 0;
 }
