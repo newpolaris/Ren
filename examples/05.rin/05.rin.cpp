@@ -512,31 +512,34 @@ VkPipelineLayout CreatePipelineLayout(VkDevice device) {
     return layout;
 }
 
-VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass pass, VkShaderModule vs, VkShaderModule fs) { 
-    VkPipelineShaderStageCreateInfo vertex_info = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
-    vertex_info.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vertex_info.module = vs;
-    vertex_info.pName = "main";
-
-    VkPipelineShaderStageCreateInfo fragment_info = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
-    fragment_info.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    fragment_info.module = fs;
-    fragment_info.pName = "main";
+VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass pass,
+                          const ShaderModule& vs, const ShaderModule& fs) { 
+    VkPipelineShaderStageCreateInfo vertex_info = GetShaderStageCreateInfo(vs, "main");
+    VkPipelineShaderStageCreateInfo fragment_info = GetShaderStageCreateInfo(fs, "main");
     VkPipelineShaderStageCreateInfo shader_stages[] = { vertex_info, fragment_info };
 
     VkVertexInputBindingDescription bindings[] = { { 0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX } };
-    VkVertexInputAttributeDescription attributes[] = { 
-        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, x) },
-        { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, nx) },
-        { 2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, tu) },
-    };
-    VkPipelineVertexInputStateCreateInfo vertex_input_info { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
-    // vertex_input_info.vertexBindingDescriptionCount = ARRAY_SIZE(bindings);
-    // vertex_input_info.pVertexBindingDescriptions = bindings;
-    // vertex_input_info.vertexAttributeDescriptionCount = ARRAY_SIZE(attributes);
-    // vertex_input_info.pVertexAttributeDescriptions = attributes;
 
-    VkPipelineInputAssemblyStateCreateInfo input_info { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
+    auto inputs = GetInputInterfaceVariables(vs, "main");
+    uint32_t offset = 0;
+    std::vector<VkVertexInputAttributeDescription> attributes;
+    for (auto in : inputs) {
+        VkVertexInputAttributeDescription att{in.location, 0, in.format, offset};
+        attributes.emplace_back(std::move(att)); 
+        offset += in.stride;
+    };
+
+    VkPipelineVertexInputStateCreateInfo vertex_input_info { 
+        VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO 
+    };
+    vertex_input_info.vertexBindingDescriptionCount = ARRAY_SIZE(bindings);
+    vertex_input_info.pVertexBindingDescriptions = bindings;
+    vertex_input_info.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributes.size());
+    vertex_input_info.pVertexAttributeDescriptions = attributes.data();
+
+    VkPipelineInputAssemblyStateCreateInfo input_info { 
+        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO 
+    };
     input_info.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
     VkPipelineViewportStateCreateInfo viewport_info { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
@@ -825,7 +828,7 @@ int main() {
     ShaderModule vertex_shader = CreateShaderModule(device, "shaders/05.rin/base.vert.spv");
     ShaderModule fragment_shader = CreateShaderModule(device, "shaders/05.rin/base.frag.spv");
     VkPipelineLayout layout = CreatePipelineLayout(device);
-    VkPipeline pipeline = CreatePipeline(device, layout, renderpass, vertex_shader.module, fragment_shader.module);
+    VkPipeline pipeline = CreatePipeline(device, layout, renderpass, vertex_shader, fragment_shader);
 
     VkCommandPoolCreateInfo info = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
     info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;

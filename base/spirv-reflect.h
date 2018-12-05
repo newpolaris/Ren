@@ -5,12 +5,14 @@
 #include <optional>
 #include <unordered_map>
 
+namespace spirv {
+
 struct PrimitiveType
 {
     SpvOp primitive_type;
     uint32_t component_count;
     std::optional<uint32_t> width;
-    std::optional<uint32_t> signedness;
+    std::optional<uint32_t> signedness; // 0 unsigned, 1 signed
 };
 
 struct Variable
@@ -44,3 +46,4 @@ using SpirvReflections = ModuleType;
 
 SpirvReflections ReflectShader(const void* data, size_t size);
 
+} // namespace spirv

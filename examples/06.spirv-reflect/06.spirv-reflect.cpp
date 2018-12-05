@@ -48,6 +48,7 @@ std::vector<char> FileRead(const std::string& filename)
 }
 
 int main() {
+    using namespace spirv;
     {
         std::string filename = "shaders/06.spirv-reflect/vertexinputstate.vert.spv";
         auto code = FileRead(filename);
@@ -57,7 +58,6 @@ int main() {
     {
         std::string filename = "shaders/06.spirv-reflect/pushdescriptor.mesh.spv";
         auto code = FileRead(filename);
-        // SpirvReflectExample(code.data(), code.size());
         ModuleType reflections = ReflectShader(code.data(), code.size());
     }
     return 0;

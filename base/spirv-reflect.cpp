@@ -1,7 +1,6 @@
 #include "spirv-reflect.h"
 
 #include <map>
-#include <volk.h>
 #include <variant>
 
 #include "macro.h"
@@ -18,6 +17,7 @@
 
 using word_t = uint32_t; // 32 bit
 
+namespace spirv {
 namespace internal {
 
 struct StreamReader
@@ -72,8 +72,7 @@ struct StreamReader
     {
         size_t strlen_in_word = LiteralString(index, word_count);
         const char* begin = data_ + sizeof(word_t)*index;
-        const char* end = data_ + sizeof(word_t)*(index + strlen_in_word);
-        str = std::string(begin, end);
+        str = std::string(begin);
         return strlen_in_word;
     }
 
@@ -349,6 +348,7 @@ void VariableParser(const internal::Variable_& var, const internal::Intermediate
 
     module->variables.emplace(rid, std::move(v));
 
+    // fill cached indices
     module->stroage_indices[SpvStorageClass(v.storage_class)].push_back(rid);
 }
 
@@ -369,18 +369,4 @@ SpirvReflections ReflectShader(const void* data, size_t size) {
     return module;
 }
 
-VkShaderStageFlagBits GetShaderStage(SpvExecutionModel model)
-{
-    switch (model)
-    {
-        case SpvExecutionModelVertex:
-            return VK_SHADER_STAGE_VERTEX_BIT;
-        case SpvExecutionModelFragment:
-            return VK_SHADER_STAGE_FRAGMENT_BIT;
-        case SpvExecutionModelTaskNV:
-            return VK_SHADER_STAGE_TASK_BIT_NV;
-        case SpvExecutionModelMeshNV:
-            return VK_SHADER_STAGE_MESH_BIT_NV;
-    }
-    ASSERT(FALSE);
-}
+} // namespace spirv {
