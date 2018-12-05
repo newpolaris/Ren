@@ -27,6 +27,7 @@
 #include "macro.h"
 #include "shader_module.h"
 
+#define FVF 0
 
 // from boost
 template <class integral, class size_t>
@@ -250,6 +251,9 @@ uint32_t GetQueueFamilyIndex(VkPhysicalDevice device, const QueueFamilyPropertie
 VkDevice CreateDevice(VkPhysicalDevice physical_device, uint32_t queue_family_index) {
     std::vector<const char*> device_extensions {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
+        VK_KHR_16BIT_STORAGE_EXTENSION_NAME,
+        VK_KHR_8BIT_STORAGE_EXTENSION_NAME,
     };
 
     const float qeue_priorites[] = { 1.f };
@@ -258,15 +262,35 @@ VkDevice CreateDevice(VkPhysicalDevice physical_device, uint32_t queue_family_in
     queue_create_info.queueCount = ARRAY_SIZE(qeue_priorites);
     queue_create_info.pQueuePriorities = qeue_priorites;
 
-    VkPhysicalDeviceFeatures features = {};
-    vkGetPhysicalDeviceFeatures(physical_device, &features);
+    uint32_t extensionCount;
+    vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &extensionCount, nullptr);
+
+    std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+    vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &extensionCount, availableExtensions.data());
+
+    VkPhysicalDeviceFeatures2 features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+    features.features.multiDrawIndirect = true;
+
+    VkPhysicalDevice8BitStorageFeaturesKHR features8 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES_KHR };
+    features8.storageBuffer8BitAccess = true;
+    features8.uniformAndStorageBuffer8BitAccess = true;
+
+    VkPhysicalDevice16BitStorageFeatures features16 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES_KHR };
+    features16.storageBuffer16BitAccess = true;
+    features16.uniformAndStorageBuffer16BitAccess = true;
+
+    VkPhysicalDeviceMeshShaderFeaturesNV featuresMesh = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_NV };
+    featuresMesh.meshShader = true;
+
+    features.pNext = &features16;
+    features16.pNext = &features8;
 
     VkDeviceCreateInfo info = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
     info.queueCreateInfoCount = 1;
     info.pQueueCreateInfos = &queue_create_info;
     info.enabledExtensionCount = static_cast<uint32_t>(device_extensions.size());;
     info.ppEnabledExtensionNames = device_extensions.data();
-    info.pEnabledFeatures = &features;
+    info.pNext = &features;
 
     VkDevice device = VK_NULL_HANDLE;
     VK_ASSERT(vkCreateDevice(physical_device, &info, nullptr, &device));
@@ -485,6 +509,14 @@ void UpdateViewportScissor(VkExtent2D extent, VkViewport* viewport, VkRect2D* sc
     scissor->extent = extent;
 }
 
+// TODO:
+VkDescriptorPool CreateDescriptorPool(VkDevice device) {
+    VkDescriptorPoolCreateInfo info { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+    VkDescriptorPool pool = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateDescriptorPool(device, &info, nullptr, &pool));
+    return pool;
+}
+
 VkDescriptorSet CreateDescriptorSet(VkDevice device, VkDescriptorPool pool) {
     VkDescriptorSetAllocateInfo info = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
     info.descriptorPool = pool;
@@ -495,29 +527,34 @@ VkDescriptorSet CreateDescriptorSet(VkDevice device, VkDescriptorPool pool) {
     return sets;
 }
 
-VkDescriptorSetLayout CreateDescriptorSetLayout(VkDevice device, VkDescriptorSetLayoutCreateFlagBits flags) {
-    VkDescriptorSetLayoutCreateInfo info = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    info.flags = flags;
-    // TODO:
-    info.bindingCount = 0;
-    info.pBindings = nullptr;
-
-    VkDescriptorSetLayout layout = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateDescriptorSetLayout(device, &info, nullptr, &layout));
-    return layout;
-}
-
 VkPipelineLayout CreatePipelineLayout(VkDevice device, ShaderModuleList shaders) {
     std::vector<VkPushConstantRange> ranges = GetPushConstantRange(shaders);
 
+    VkDescriptorSetLayoutBinding set_binding {};
+    set_binding.binding = 0;
+    set_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    set_binding.descriptorCount = 1;
+    set_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+    VkDescriptorSetLayoutCreateInfo set_create_info = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+    set_create_info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
+    set_create_info.bindingCount = 1;
+    set_create_info.pBindings = &set_binding;
+
+    VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateDescriptorSetLayout(device, &set_create_info, nullptr, &set_layout));
+
     VkPipelineLayoutCreateInfo info = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-    info.setLayoutCount = 0;
-    info.pSetLayouts = nullptr;
+    info.setLayoutCount = 1;
+    info.pSetLayouts = &set_layout;
     info.pushConstantRangeCount = static_cast<uint32_t>(ranges.size());
     info.pPushConstantRanges = ranges.data();
 
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VK_ASSERT(vkCreatePipelineLayout(device, &info, nullptr, &layout));
+
+    vkDestroyDescriptorSetLayout(device, set_layout, nullptr);
+
     return layout;
 }
 
@@ -527,6 +564,7 @@ VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass
     VkPipelineShaderStageCreateInfo fragment_info = GetPipelineShaderStageCreateInfo(fs, "main");
     VkPipelineShaderStageCreateInfo shader_stages[] = { vertex_info, fragment_info };
 
+#if FVF
     VkVertexInputBindingDescription bindings[] = { { 0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX } };
 
     auto inputs = GetInputInterfaceVariables(vs, "main");
@@ -537,14 +575,17 @@ VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass
         attributes.emplace_back(std::move(att)); 
         offset += in.stride;
     };
+#endif
 
     VkPipelineVertexInputStateCreateInfo vertex_input_info { 
         VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO 
     };
+#if FVF
     vertex_input_info.vertexBindingDescriptionCount = ARRAY_SIZE(bindings);
     vertex_input_info.pVertexBindingDescriptions = bindings;
     vertex_input_info.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributes.size());
     vertex_input_info.pVertexAttributeDescriptions = attributes.data();
+#endif
 
     VkPipelineInputAssemblyStateCreateInfo input_info { 
         VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO 
@@ -556,6 +597,7 @@ VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass
     viewport_info.scissorCount = 1;
 
     VkPipelineRasterizationStateCreateInfo raster_info = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
+    raster_info.lineWidth = 1.0;
     raster_info.polygonMode = VK_POLYGON_MODE_FILL;
     raster_info.cullMode = VK_CULL_MODE_BACK_BIT;
     raster_info.frontFace = VK_FRONT_FACE_CLOCKWISE;
@@ -938,8 +980,24 @@ int main() {
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         vkCmdSetViewport(command_buffer, 0, 1, &viewport);
         vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+
+    #if FVF
         VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(command_buffer, 0, 1, &vb.buffer, &offset);
+    #else
+        VkDescriptorBufferInfo buffer_info = {};
+        buffer_info.buffer = vb.buffer;
+        buffer_info.offset = 0;
+        buffer_info.range = vb.size;
+
+        VkWriteDescriptorSet desc_set { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+        desc_set.dstBinding = 0;
+        desc_set.descriptorCount = 1;
+        desc_set.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        desc_set.pBufferInfo = &buffer_info;
+
+        vkCmdPushDescriptorSetKHR(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &desc_set);
+    #endif
         vkCmdBindIndexBuffer(command_buffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 
         for (auto draw : draws) {
