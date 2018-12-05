@@ -16,7 +16,8 @@ VK_MEMORY_PROPERTY_HOST_CACHED_BIT - gpu fills buffer and you want to read that
 0:40:45 - Device Local Memory make 0.31 ms
 0:43:42 - Draw 10 times, makes mesh shader 10.41 vs 2.3 ms (stroage buffer or FVF)
 0:54:26 - Test optimizeVertexCache with randome suffle
-1:02:32 - Test push descriptor with position * 1e-9. 1.9 ms > 1.0 ms. 레스터한것과 안한것의 결과가 2배정도면 거의 optimal 로 불수 있지 않을까?
+1:02:32 - Test push descriptor with position * 1e-9. 1.9 ms > 1.0 ms. 
+          레스터한것과 안한것의 결과가 2배정도면 거의 optimal 로 불수 있지 않을까? (position을 0 및 0.1로 둬서 생성을 막았다)
           5 ~ 10 billion 이 결과 예상값이고 5 정도 나오면 그 결과에 만족할 수 있음.
 1:04:20 - N triangle > n/2 vertices (minecraft 같은건 nx2)
           upto 128 and one is used by gl_primitiveCountNV (so, 127) and makes divided by 3. up to 42 triangles
@@ -43,35 +44,35 @@ VK_MEMORY_PROPERTY_HOST_CACHED_BIT - gpu fills buffer and you want to read that
 
 
 
-happy_buddha, Nvidia 660m, one commandbuffer with wait-idle
+- happy_buddha, Nvidia 660m, one commandbuffer with wait-idle
 
 - FVF vs PUSH descriptor
 
-        'basic' 'duplicate remove' 'optimize vertex fetch' 'reduce vertex size'
-FVF  :   2.54          1.0                0.84                     0.84
-PUSH :   2.67          3.8                1.25                     0.91
+            'basic' 'duplicate remove' 'optimize vertex fetch' 'reduce vertex size'
+    FVF  :   2.54          1.0                0.84                     0.84
+    PUSH :   2.67          3.8                1.25                     0.91
 
 
 - indirect drawing testing with CPU Culling on cluster meshlet
 
-run x5 
+    run x5 
 
-Single  / Multiple / Indirect
-4.37 ms / 5.75 ms  / 5.39 ms (1)
-5.77 ms / 5.55 ms  / 5.40 ms (2)
+    Single  / Multiple / Indirect
+    4.37 ms / 5.75 ms  / 5.39 ms (1)
+    5.77 ms / 5.55 ms  / 5.40 ms (2)
 
-(1) 메쉬렛 생성의 고정 상수 및 몇개 구문 바꾸기 전 (멀 잘못 고친 버그 요인이라 생각)
-(2) 뭘 바ㅤㄲㅝㅅ는데 그다음부터 이와 같은 결과가 나옴
+    (1) 메쉬렛 생성의 고정 상수 및 몇개 구문 바꾸기 전 (멀 잘못 고친 버그 요인이라 생각)
+    (2) 뭘 바ㅤㄲㅝㅅ는데 그다음부터 이와 같은 결과가 나옴
 
-문제는 vertex/fragment의 작업이 지나치게 단순하다는 것과 
-multiple indirect 의 성능이 더 낮거나 유사하다는 것
-그리고 scene 자체가 너무 단순히 가운데 객체가 있다는 것
-64개의 버텍스가 옵티멀이 아닐 수 있다는 점. (1) 테스트 할 때는 128 부터가 가장 best 였으나 (2) 에서는 64가 최적;
+    문제는 vertex/fragment의 작업이 지나치게 단순하다는 것과 
+    multiple indirect 의 성능이 더 낮거나 유사하다는 것
+    그리고 scene 자체가 너무 단순히 가운데 객체가 있다는 것
+    64개의 버텍스가 옵티멀이 아닐 수 있다는 점. (1) 테스트 할 때는 128 부터가 가장 best 였으나 (2) 에서는 64가 최적;
 
-(https://gist.github.com/zeux/1cef1417215add13c9eb26451f26afe2) 여기선 128 부터 떨어진다고 되어있음
+    (https://gist.github.com/zeux/1cef1417215add13c9eb26451f26afe2) 여기선 128 부터 떨어진다고 되어있음
 
-
-
-Worklist:
-
-* Device Local Memory
+- 5x5 buddha, Nvida 660m, 10만 삼각형, one commandbuffer with wait command queue
+ 
+          'basic' 'optimize lib' '16bit vertex fetch'
+    FVF :  0.2b        0.7b               
+    PUSH:  0.2b        0.4b             

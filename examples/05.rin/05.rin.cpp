@@ -53,9 +53,9 @@ struct alignas(16) MeshDraw
 
 struct Vertex
 {
-    float x, y, z;
-    float nx, ny, nz;
-    float tu, tv;
+    uint16_t x, y, z, w;
+    uint8_t nx, ny, nz, nw;
+    uint16_t tu, tv;
 };
 
 struct Mesh
@@ -85,19 +85,21 @@ Mesh LoadMesh(const std::string& filename)
         int vti = obj.f[i * 3 + 1];
         int vni = obj.f[i * 3 + 2];
 
-        v.x = NegativeIndexHelper(obj.v, vi, 0);
-        v.y = NegativeIndexHelper(obj.v, vi, 1);
-        v.z = NegativeIndexHelper(obj.v, vi, 2);
-        v.nx = NegativeIndexHelper(obj.vn, vni, 0);
-        v.ny = NegativeIndexHelper(obj.vn, vni, 1);
-        v.nz = NegativeIndexHelper(obj.vn, vni, 2);
-        v.tu = NegativeIndexHelper(obj.vt, vti, 0);
-        v.tv = NegativeIndexHelper(obj.vt, vti, 1);
+        v.x = meshopt_quantizeHalf(NegativeIndexHelper(obj.v, vi, 0));
+        v.y = meshopt_quantizeHalf(NegativeIndexHelper(obj.v, vi, 1));
+        v.z = meshopt_quantizeHalf(NegativeIndexHelper(obj.v, vi, 2));
+        v.w = 0;
+        v.nx = uint8_t(NegativeIndexHelper(obj.vn, vni, 0) * 127.f + 127.f);
+        v.ny = uint8_t(NegativeIndexHelper(obj.vn, vni, 1) * 127.f + 127.f);
+        v.nz = uint8_t(NegativeIndexHelper(obj.vn, vni, 2) * 127.f + 127.f);
+        v.nw = 0;
+        v.tu = meshopt_quantizeHalf(NegativeIndexHelper(obj.vt, vti, 0));
+        v.tv = meshopt_quantizeHalf(NegativeIndexHelper(obj.vt, vti, 1));
     }
 
     std::vector<uint32_t> indices(index_count);
 
-    if (true) {
+    if (false) {
         for (uint32_t i = 0; i < static_cast<uint32_t>(index_count); i++)
             indices[i] = i;
     } else {
@@ -567,13 +569,10 @@ VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass
 #if FVF
     VkVertexInputBindingDescription bindings[] = { { 0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX } };
 
-    auto inputs = GetInputInterfaceVariables(vs, "main");
-    uint32_t offset = 0;
-    std::vector<VkVertexInputAttributeDescription> attributes;
-    for (auto in : inputs) {
-        VkVertexInputAttributeDescription att{in.location, 0, in.format, offset};
-        attributes.emplace_back(std::move(att)); 
-        offset += in.stride;
+    VkVertexInputAttributeDescription attributes[] = { 
+        { 0, 0, VK_FORMAT_R16G16B16A16_SFLOAT, offsetof(Vertex, x) },
+        { 1, 0, VK_FORMAT_R8G8B8A8_UINT, offsetof(Vertex, nx) },
+        { 2, 0, VK_FORMAT_R16G16_SFLOAT, offsetof(Vertex, tu) },
     };
 #endif
 
@@ -583,8 +582,8 @@ VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass
 #if FVF
     vertex_input_info.vertexBindingDescriptionCount = ARRAY_SIZE(bindings);
     vertex_input_info.pVertexBindingDescriptions = bindings;
-    vertex_input_info.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributes.size());
-    vertex_input_info.pVertexAttributeDescriptions = attributes.data();
+    vertex_input_info.vertexAttributeDescriptionCount = 3;
+    vertex_input_info.pVertexAttributeDescriptions = attributes;
 #endif
 
     VkPipelineInputAssemblyStateCreateInfo input_info { 

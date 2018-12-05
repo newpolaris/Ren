@@ -112,6 +112,10 @@ std::optional<InputInterfaceAttribute> FindVariable(const InputInterfaceAttribut
     return optional;
 }
 
+// TODO: can't handle - f16vec2, float16_t case
+//
+// In input attribute declared as VK_FORMAT_R16G16B16A16, in vertex (vec4)
+// so, result always 32
 InputInterfaceAttributeList GetInputInterfaceVariables(const ShaderModule& shader, const std::string& name)
 {
     const auto& entries = shader.reflections.entry_points;
