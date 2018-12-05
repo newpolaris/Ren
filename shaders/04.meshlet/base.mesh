@@ -65,7 +65,7 @@ void main()
         vec3 position = vec3(vertices[i].x, vertices[i].y, vertices[i].z);
         vec3 normal = vec3(int(vertices[i].nx), int(vertices[i].ny), int(vertices[i].nz)) / 127.0 - 1.0;
 
-        gl_MeshVerticesNV[i].gl_Position = vec4(position*vec3(0.4, 0.4, 0.1) + vec3(0.0, -0.7, 0.5), 1.0);
+        gl_MeshVerticesNV[i].gl_Position = vec4(position*vec3(1.0, 1.0, 0.0) + vec3(0.0, 0.0, 0.5), 1.0);
         color[i] = vec4(normal * 0.5 + vec3(0.5), 1.0);
 
 	#if DEBUG

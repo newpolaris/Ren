@@ -9,6 +9,8 @@ struct ShaderModule
     spirv::SpirvReflections reflections;
 };
 
+using ShaderModuleList = std::initializer_list<ShaderModule>;
+
 struct InputInterfaceAttribute
 {
     VkFormat format;
@@ -23,8 +25,10 @@ using InputInterfaceAttributeList = std::vector<InputInterfaceAttribute>;
 
 ShaderModule CreateShaderModule(VkDevice device, const char* filename);
 
-VkPipelineShaderStageCreateInfo GetShaderStageCreateInfo(const ShaderModule& shader, const std::string& name);
-
 InputInterfaceAttributeList GetInputInterfaceVariables(const ShaderModule& shader, const std::string& name);
 VariableRefList GetInterfaceVariableReferences(const ShaderModule& shader, const std::string& name);
 std::optional<InputInterfaceAttribute> FindVariable(const InputInterfaceAttributeList& list, const std::string& name);
+
+VkPipelineShaderStageCreateInfo GetPipelineShaderStageCreateInfo(const ShaderModule& shader, const std::string& name);
+std::vector<VkPushConstantRange> GetPushConstantRange(const ShaderModuleList shaders);
+

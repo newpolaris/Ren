@@ -22,6 +22,7 @@
 #include <objparser.h>
 #include <cstdlib>
 #include <meshoptimizer.h>
+#include <glm/glm.hpp>
 
 #include "macro.h"
 #include "shader_module.h"
@@ -42,6 +43,12 @@ template <class integral_1, class integral_2>
 bool flag_test(integral_1 x, integral_2 flag) noexcept {
     return (x & flag) == flag;
 }
+
+struct alignas(16) MeshDraw
+{
+	float offset[2];
+	float scale[2];
+};
 
 struct Vertex
 {
@@ -500,12 +507,14 @@ VkDescriptorSetLayout CreateDescriptorSetLayout(VkDevice device, VkDescriptorSet
     return layout;
 }
 
-VkPipelineLayout CreatePipelineLayout(VkDevice device) {
+VkPipelineLayout CreatePipelineLayout(VkDevice device, ShaderModuleList shaders) {
+    std::vector<VkPushConstantRange> ranges = GetPushConstantRange(shaders);
+
     VkPipelineLayoutCreateInfo info = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
     info.setLayoutCount = 0;
     info.pSetLayouts = nullptr;
-    info.pushConstantRangeCount = 0;
-    info.pPushConstantRanges = nullptr;
+    info.pushConstantRangeCount = static_cast<uint32_t>(ranges.size());
+    info.pPushConstantRanges = ranges.data();
 
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VK_ASSERT(vkCreatePipelineLayout(device, &info, nullptr, &layout));
@@ -514,8 +523,8 @@ VkPipelineLayout CreatePipelineLayout(VkDevice device) {
 
 VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass pass,
                           const ShaderModule& vs, const ShaderModule& fs) { 
-    VkPipelineShaderStageCreateInfo vertex_info = GetShaderStageCreateInfo(vs, "main");
-    VkPipelineShaderStageCreateInfo fragment_info = GetShaderStageCreateInfo(fs, "main");
+    VkPipelineShaderStageCreateInfo vertex_info = GetPipelineShaderStageCreateInfo(vs, "main");
+    VkPipelineShaderStageCreateInfo fragment_info = GetPipelineShaderStageCreateInfo(fs, "main");
     VkPipelineShaderStageCreateInfo shader_stages[] = { vertex_info, fragment_info };
 
     VkVertexInputBindingDescription bindings[] = { { 0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX } };
@@ -777,10 +786,10 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityF
 }
 
 int main() {
-    const char* application_name = "Hello Triangle";
+    const char* application_name = "Hello Kitty";
     const char* engine_name = "Rin";
-    const int width = 1024;
-    const int height = 768;
+    const int width = 1280;
+    const int height = 1024;
 
     if (glfwInit() != GLFW_TRUE)
         return EXIT_FAILURE;
@@ -827,7 +836,7 @@ int main() {
 
     ShaderModule vertex_shader = CreateShaderModule(device, "shaders/05.rin/base.vert.spv");
     ShaderModule fragment_shader = CreateShaderModule(device, "shaders/05.rin/base.frag.spv");
-    VkPipelineLayout layout = CreatePipelineLayout(device);
+    VkPipelineLayout layout = CreatePipelineLayout(device, { vertex_shader, fragment_shader });
     VkPipeline pipeline = CreatePipeline(device, layout, renderpass, vertex_shader, fragment_shader);
 
     VkCommandPoolCreateInfo info = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
@@ -845,6 +854,7 @@ int main() {
 
     // gpu-gpu synchronize
     VkSemaphore semaphore = CreateSemaphore(device, 0);
+    // VkSemaphore singal_semaphore = CreateSemaphore(device, 0);
 
 #if _DEBUG
     const char* objfile = "models/kitten.obj";
@@ -876,6 +886,18 @@ int main() {
     UploadBuffer(device, command_pool, command_queue, staging, ib, ib_size, mesh.indices.data());
 
     VkQueryPool timestamp_pool = CreateQueryPool(device, VK_QUERY_TYPE_TIMESTAMP, 1024, 0);
+
+    uint32_t row_count = 5;
+    uint32_t draw_count = row_count*row_count;
+    std::vector<MeshDraw> draws(draw_count);
+    for (uint32_t i = 0; i < draw_count; i++) {
+        draws[i].offset[0] = (float(i % row_count) + 0.5f) / row_count;
+        draws[i].offset[1] = (float(i / row_count) + 0.5f) / row_count;
+        draws[i].scale[0] = 1.f / row_count;
+        draws[i].scale[1] = 1.f / row_count;
+    }
+
+    double cpu_average = 0.0, gpu_average = 0.0, wait_average = 0.0;
 
     while(!glfwWindowShouldClose(windows)) {
         glfwPollEvents();
@@ -919,7 +941,11 @@ int main() {
         VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(command_buffer, 0, 1, &vb.buffer, &offset);
         vkCmdBindIndexBuffer(command_buffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(command_buffer, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
+
+        for (auto draw : draws) {
+            vkCmdPushConstants(command_buffer, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(draw), &draw);
+            vkCmdDrawIndexed(command_buffer, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
+        }
         vkCmdEndRenderPass(command_buffer);
 
         vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 1);
@@ -931,6 +957,8 @@ int main() {
         submit.waitSemaphoreCount = 1;
         submit.pWaitSemaphores = &semaphore;
         submit.pWaitDstStageMask = stage_flags;
+        // submit.signalSemaphoreCount = 1;
+        // submit.pSignalSemaphores = &singal_semaphore;
         submit.commandBufferCount = 1;
         submit.pCommandBuffers = &command_buffer;
 
@@ -941,23 +969,37 @@ int main() {
         present_info.swapchainCount = 1;
         present_info.pSwapchains = &swapchain.swapchain;
         present_info.pImageIndices = &imageindex;
+        // present_info.pWaitSemaphores = &singal_semaphore;
+        // present_info.waitSemaphoreCount = 1;
         vkQueuePresentKHR(present_queue, &present_info);
 
         auto cpu_end = std::chrono::steady_clock::now(); 
-        auto cpu_time = std::chrono::duration<float>(cpu_end - cpu_begin).count();
 
-        // 'VK_QUERY_RESULT_WAIT_BIT' seems not work properly
-        VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
+        // 'VK_QUERY_RESULT_WAIT_BIT' seems not working
+        auto wait_begin = std::chrono::steady_clock::now();
+        // VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
+        VK_ASSERT(vkQueueWaitIdle(command_queue));
+        auto wait_end = std::chrono::steady_clock::now();
+
         uint64_t timestamps[2] = {};
-        vkGetQueryPoolResults(device, timestamp_pool, 0, 2, sizeof(timestamps), timestamps, sizeof(uint64_t),
-                              VK_QUERY_RESULT_64_BIT);
+        vkGetQueryPoolResults(device, timestamp_pool, 0, 2, sizeof(timestamps), timestamps,
+                              sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
 
+        auto wait_time = std::chrono::duration<double, std::milli>(wait_end - wait_begin).count();
+        auto cpu_time = std::chrono::duration<double, std::milli>(cpu_end - cpu_begin).count();
         auto gpu_scaler = physical_properties.properties.limits.timestampPeriod;
-        auto gpu_time = static_cast<float>((timestamps[1] - timestamps[0]) * 1e-6) * gpu_scaler;
+        auto gpu_time = static_cast<double>((timestamps[1] - timestamps[0]) * 1e-6) * gpu_scaler;
+
+        gpu_average = glm::mix(gpu_average, gpu_time, 0.05);
+        cpu_average = glm::mix(cpu_average, cpu_time, 0.05);
+        wait_average = glm::mix(wait_average, wait_time, 0.05);
+
         auto triangle_count = static_cast<int>(mesh.indices.size() / 3);
-             
+		auto trianglesPerSec = double(draw_count) * double(triangle_count) / double(gpu_average * 1e-3) * 1e-9;
+
         char title[256] = {};  
-        sprintf(title, "cpu: %.3f ms; gpu: %.3f ms; triangles %d", cpu_time, gpu_time, triangle_count);
+        sprintf(title, "wait: %.2f ms; cpu: %.2f ms; gpu: %.2f ms; triangles %d; meshlets %d; %.1fB tri/sec",
+                wait_average, cpu_average, gpu_average, triangle_count, 1, trianglesPerSec);
         glfwSetWindowTitle(windows, title);
     }
 

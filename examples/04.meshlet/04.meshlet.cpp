@@ -451,11 +451,12 @@ private:
         vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
 
         Mesh mesh;
-    #if _DEBUG
-        bool rcm = loadMesh(mesh, "models/bunny.obj");
+    #if !_DEBUG
+        const char* objfile = "models/kitten.obj";
     #else
-        bool rcm = loadMesh(mesh, "models/happy-buddha.obj");
+        const char* objfile = "models/buddha.obj";
     #endif
+        bool rcm = loadMesh(mesh, objfile);
         assert(rcm);
 
         buildMeshlets(mesh);
@@ -499,7 +500,9 @@ private:
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, vb, scratch, mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, ib, scratch, mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, mb, scratch, mesh.meshlets.data(), mesh.meshlets.size() * sizeof(Meshlet));
+        // build meshlet indices for rendering mesh in standard vertex shader;
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, mib, scratch, mesh.meshletIndices.data(), mesh.meshletIndices.size() * sizeof(uint32_t));
+        // muliple indirect draw buffer for c-ulled meshlet cluster
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, cb, scratch, indirectCommands.data(), indirectCommands.size() * sizeof(VkDrawIndexedIndirectCommand));
 
         VkQueryPool queryPool = createQueryPool(device, 128);
@@ -585,7 +588,7 @@ private:
                 DescriptorInfo descriptors[] = { vb.buffer };
                 vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshUpdateTemplate, meshPipelineLayout, 0, descriptors);
 
-            #if 0
+            #if 1
                 vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
                 vkCmdDrawIndexed(commandBuffer, uint32_t(mesh.indices.size()), 1, 0, 0, 0);
             #else
@@ -660,8 +663,12 @@ private:
             frameGpuAvg = glm::mix(frameGpuAvg, (frameGpuEnd - frameGpuBegin), 0.05);
             frameWaitAvg = glm::mix(frameWaitAvg, (waitEnd - waitBegin), 0.05);
 
+            uint32_t draw_count = 1;
+            auto triangle_count = static_cast<int>(mesh.indices.size() / 3);
+            auto trianglesPerSec = double(draw_count) * double(triangle_count) / double(frameGpuAvg * 1e-3) * 1e-9;
+
             char title[256];
-            sprintf(title, "cpu: %.2f ms; wait time: %.2f ms; gpu: %.2f ms; triangles %d; meshlets %d", frameCpuAvg, frameWaitAvg, frameGpuAvg, int(mesh.indices.size() / 3), int(mesh.meshlets.size()));
+            sprintf(title, "cpu: %.2f ms; wait time: %.2f ms; gpu: %.2f ms; triangles %d; meshlets %d, %.1fB tri/sec", frameCpuAvg, frameWaitAvg, frameGpuAvg, int(mesh.indices.size() / 3), int(mesh.meshlets.size()), trianglesPerSec);
             glfwSetWindowTitle(window, title);
             // currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
         }
@@ -1265,10 +1272,6 @@ private:
         vkMapMemory(device, uniformBuffersMemory[currentImage], 0, sizeof(ubo), 0, &data);
             memcpy(data, &ubo, sizeof(ubo));
         vkUnmapMemory(device, uniformBuffersMemory[currentImage]);
-    }
-
-    void drawFrame()
-    {
     }
 
     VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats)

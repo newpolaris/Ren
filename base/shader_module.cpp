@@ -37,21 +37,25 @@ VkShaderStageFlagBits GetShaderStageBit(SpvExecutionModel model)
     ASSERT(FALSE);
 }
 
-VkPipelineShaderStageCreateInfo GetShaderStageCreateInfo(const ShaderModule& shader, const std::string& name) {
-    const auto& entries = shader.reflections.entry_points;
-    auto it = std::find_if(entries.begin(), entries.end(), [name](const auto& pts) { return name == pts.name; });
-    ASSERT(it != entries.end());
-    
-    VkPipelineShaderStageCreateInfo info = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
-    info.stage = GetShaderStageBit(it->execution_model);
-    info.module = shader.module;
-    info.pName = it->name.c_str();
-
-    return std::move(info);
-}
-
 uint32_t GetPrimitiveStride(const spirv::PrimitiveType& type) {
     return type.width.value() * type.component_count / 8;
+}
+
+uint32_t GetPrimitiveStride(const spirv::SpirvReflections& reflections, const uint32_t& type_id) {
+    const auto& primitive = reflections.primitive_types.at(type_id);
+    return GetPrimitiveStride(primitive);
+}
+
+uint32_t GetStride(const spirv::SpirvReflections& reflections, const uint32_t& type_id) {
+    auto it = reflections.struct_types.find(type_id);
+    if (it != reflections.struct_types.end()) {
+        const auto& last = it->second.members.back();
+        return last.offset + GetStride(reflections, last.type_id);
+    } else {
+        auto pit = reflections.primitive_types.find(type_id);
+        ASSERT(pit != reflections.primitive_types.end());
+        return GetPrimitiveStride(pit->second);
+    }
 }
 
 VkFormat GetPrimitiveFormat(const spirv::PrimitiveType& type) {
@@ -135,31 +139,68 @@ InputInterfaceAttributeList GetInputInterfaceVariables(const ShaderModule& shade
     return std::move(list);
 }
 
-VariableRefList GetInterfaceVariableReferences(const ShaderModule& shader, const std::string& name) {
+const spirv::EntryPoint& GetEntryPoint(const ShaderModule& shader, const std::string& name) {
     const auto& entries = shader.reflections.entry_points;
-    auto it = std::find_if(entries.begin(), entries.end(), 
-                           [&name](const auto& pts) { return name == pts.name; });
+    auto it = std::find_if(entries.begin(), entries.end(), [&name](const auto& pts) { return name == pts.name; });
     ASSERT(it != entries.end());
-
     const auto& EntryPoint(*it);
+    return EntryPoint;
+}
+
+VariableRefList GetInterfaceVariableReferences(const ShaderModule& shader, const std::string& name) {
+    auto& entry_point = GetEntryPoint(shader, name);
     std::vector<VariableRef> references;
-    references.reserve(EntryPoint.interfaces_ids.size());
-    for (auto id : EntryPoint.interfaces_ids)
+    references.reserve(entry_point.interfaces_ids.size());
+    for (auto id : entry_point.interfaces_ids)
         references.push_back(std::ref(shader.reflections.variables.at(id)));
     return std::move(references);
 }
 
-/*
+VkPipelineShaderStageCreateInfo GetPipelineShaderStageCreateInfo(const ShaderModule& shader, const std::string& name) {
+    auto& entriy_point = GetEntryPoint(shader, name);
+    
+    VkPipelineShaderStageCreateInfo info = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+    info.stage = GetShaderStageBit(entriy_point.execution_model);
+    info.module = shader.module;
+    info.pName = entriy_point.name.c_str();
 
-    if ((p_node->op != SpvOpVariable) ||
-        ((p_node->storage_class != SpvStorageClassUniform) && (p_node->storage_class != SpvStorageClassUniformConstant)))
-    {
-      continue;
+    return std::move(info);
+}
+
+std::vector<VkPushConstantRange> GetPushConstantRange(const ShaderModuleList shaders) {
+    std::vector<VkPushConstantRange> ranges;
+    for (auto& shader : shaders) {
+        auto& reflection = shader.reflections;
+        auto& entry_point = GetEntryPoint(shader, "main");
+        for (auto& v : reflection.variables) {
+            auto& var = v.second;
+            if (var.storage_class != SpvStorageClassPushConstant)
+                continue;
+            auto& st = reflection.struct_types.at(var.type_id);
+            auto offset = st.members.front().offset;
+            auto size = GetStride(reflection, var.type_id);
+
+            VkPushConstantRange range = {};
+            range.stageFlags = GetShaderStageBit(entry_point.execution_model);
+            range.size = size;
+            range.offset = offset;
+            ranges.push_back(range);
+        }
     }
-    if ((p_node->decorations.set.value == INVALID_VALUE) || (p_node->decorations.binding.value == INVALID_VALUE)) {
-      continue;
+
+    // overlapping region requires both stage's flag in vkCmdPushConstants
+    // so prohibit it
+#if _DEBUG
+    std::vector<std::pair<uint32_t, uint32_t>> intervals;
+    for (auto r : ranges)
+        intervals.push_back({r.offset, r.size});
+    std::sort(intervals.begin(), intervals.end());
+    for (size_t i = 1; i < intervals.size(); i++) {
+        uint32_t range_end = intervals[i-1].first + intervals[i-1].second;
+        uint32_t next_range_start = intervals[i].first;
+        ASSERT(range_end <= next_range_start);
     }
+#endif
+    return std::move(ranges);
+}
 
-    p_module->descriptor_binding_count += 1;
-
-*/

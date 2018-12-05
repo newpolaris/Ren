@@ -30,7 +30,7 @@ void main()
     vec3 position = vec3(vertices[gl_VertexIndex].x, vertices[gl_VertexIndex].y, vertices[gl_VertexIndex].z);
     vec3 normal = vec3(int(vertices[gl_VertexIndex].nx), int(vertices[gl_VertexIndex].ny), int(vertices[gl_VertexIndex].nz)) / 127.0 - 1.0;
 
-    gl_Position = vec4(position*vec3(0.4, 0.4, 0.1) + vec3(0.0, -0.7, 0.5), 1.0);
+    gl_Position = vec4(position*vec3(1.0, 1.0, 0.5) + vec3(0.0, 0.0, 0.5), 1.0);
     color = vec4(normal * 0.5 + vec3(0.5), 1.0);
 
 #if DEBUG
