@@ -8,6 +8,12 @@ layout(location = 2) in vec2 texcoord;
 layout(location = 0) out vec3 color_;
 layout(location = 1) out vec2 texcoord_;
 
+layout(binding = 0) uniform UniformBufferObject {
+    mat4 _model_;
+    mat4 _view_;
+    mat4 _proj_;
+} ubo;
+
 void main() {
     color_ = normal;
     texcoord_ = texcoord;

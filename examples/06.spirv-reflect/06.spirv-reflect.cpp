@@ -25,6 +25,22 @@ int SpirvReflectExample(const void* spirv_code, size_t spirv_nbytes) {
     // Output variables, descriptor bindings, descriptor sets, and push constants
     // can be enumerated and extracted using a similar mechanism.
 
+    {
+        result = spvReflectEnumerateDescriptorBindings(&module, &var_count, NULL);
+        assert(result == SPV_REFLECT_RESULT_SUCCESS);
+        std::vector<SpvReflectDescriptorBinding*> input_vars(var_count);
+        result = spvReflectEnumerateDescriptorBindings(&module, &var_count, input_vars.data());
+    }
+    {
+        result = spvReflectEnumerateEntryPointDescriptorBindings(&module, "main", &var_count, NULL);
+        assert(result == SPV_REFLECT_RESULT_SUCCESS);
+        std::vector<SpvReflectDescriptorBinding*> input_vars(var_count);
+        result = spvReflectEnumerateEntryPointDescriptorBindings(&module, "main", &var_count, input_vars.data());
+    }
+
+    result = spvReflectEnumeratePushConstants(&module, &var_count, NULL);
+    // std::vector<SpvReflectInterfaceVariable*> input_vars(var_count);
+
     // Destroy the reflection data when no longer required.
     spvReflectDestroyShaderModule(&module);
 

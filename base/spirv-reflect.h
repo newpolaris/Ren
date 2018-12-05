@@ -12,7 +12,23 @@ struct PrimitiveType
     SpvOp primitive_type;
     uint32_t component_count;
     std::optional<uint32_t> width;
-    std::optional<uint32_t> signedness; // 0 unsigned, 1 signed
+    std::optional<uint32_t> signedness; // 0 unsigned, 1 signed; TODO
+};
+
+struct MemberType
+{
+    uint32_t type_id;
+    uint32_t offset;
+    std::string name;
+    std::optional<uint32_t> matrix_stride;
+    std::optional<uint32_t> builtin;
+    std::optional<uint32_t> col_major; // TODO
+};
+
+struct StructType
+{
+    std::optional<std::string> name;
+    std::vector<MemberType> members;
 };
 
 struct Variable
@@ -38,6 +54,7 @@ struct ModuleType
 {
     std::vector<EntryPoint> entry_points;
     std::unordered_map<uint32_t, PrimitiveType> primitive_types;
+    std::unordered_map<uint32_t, StructType> struct_types;
     std::unordered_map<uint32_t, Variable> variables;
     std::unordered_map<SpvStorageClass, std::vector<uint32_t>> stroage_indices;
 };

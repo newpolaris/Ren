@@ -1,3 +1,8 @@
+// references
+//
+// [vulkan-cpp-library]
+// [spirv_reflect]
+
 #include "spirv-reflect.h"
 
 #include <map>
@@ -106,8 +111,15 @@ struct Variable_
 
 struct Decoration_
 {
-    SpvDecoration decoration;
+    SpvDecoration decorator;
     uint32_t operand;
+};
+
+struct MemberDecoration_
+{
+    SpvDecoration decorator;
+    uint32_t member;
+    std::optional<uint32_t> operand;
 };
 
 struct PointerType_
@@ -117,35 +129,47 @@ struct PointerType_
     uint32_t type_id;
 };
 
-struct IntegerType
+struct IntegerType_
 {
     word_t result_id;
     word_t width;
     word_t signedness; // 0 unsigned, 1 signed
 };
 
-struct FloatType
+struct FloatType_
 {
     word_t result_id;
     word_t width;
 };
 
-struct VectorType
+struct VectorType_
 {
     uint32_t result_id;
     uint32_t component_type_id;
     uint32_t component_count;
 };
 
-using PrimitiveType_ = std::variant<IntegerType, FloatType, VectorType>;
+struct StructType_
+{
+    word_t result_id;
+    std::vector<word_t> member_ids;
+};
 
+using Name_ = std::string;
+using MemberName_ = std::unordered_map<word_t, std::string>;
+using PrimitiveType_ = std::variant<IntegerType_, FloatType_, VectorType_>;
+
+// borrowed from 'vulkan-cpp-library'
 struct IntermediateType {
     std::vector<EntryPoint> entry_points;
     std::unordered_map<uint32_t, std::vector<Decoration_>> decorations;
+    std::unordered_map<uint32_t, std::vector<MemberDecoration_>> member_decorations;
     std::unordered_map<uint32_t, Variable_> variables;
     std::unordered_map<uint32_t, PointerType_> pointer_types;
     std::map<uint32_t, PrimitiveType_> primitive_types; // process order dependent
-    std::unordered_map<uint32_t, std::string> names;
+    std::map<uint32_t, StructType_> struct_types; 
+    std::unordered_map<uint32_t, Name_> names;
+    std::unordered_map<uint32_t, MemberName_> member_names;
 };
 
 void ParseInstruction(word_t opcode, size_t word_count, const StreamReader& reader,
@@ -179,6 +203,15 @@ void ParseInstruction(word_t opcode, size_t word_count, const StreamReader& read
         reader.LiteralString(2, word_count, str);
         intermediate->names.emplace(target_id, std::move(str));
     } break;
+    case SpvOpMemberName:
+    {
+        ASSERT(word_count >= 4);
+        uint32_t type_id = reader.uint32(1);
+        uint32_t member = reader.uint32(2);
+        std::string str;
+        reader.LiteralString(3, word_count, str);
+        intermediate->member_names[type_id].emplace(member, std::move(str));
+    } break;
     case SpvOpDecorate:
     {
         ASSERT(word_count >= 3);
@@ -195,6 +228,33 @@ void ParseInstruction(word_t opcode, size_t word_count, const StreamReader& read
         {
             ASSERT(word_count == 4);
             intermediate->decorations[target_id].push_back({ decoration, reader.uint32(3) });
+        } break;
+        }
+    } break;
+    case SpvOpMemberDecorate:
+    {
+        ASSERT(word_count >= 3);
+        uint32_t struct_type_id = reader.uint32(1);
+        ASSERT(struct_type_id < id_bound);
+
+        uint32_t member = reader.uint32(2);
+        SpvDecoration decoration = SpvDecoration(reader.uint32(3));
+        switch (decoration)
+        {
+        case SpvDecorationOffset:
+        case SpvDecorationMatrixStride:
+        case SpvDecorationBuiltIn:
+        {
+            ASSERT(word_count == 5);
+            intermediate->member_decorations[struct_type_id].push_back(
+                { decoration, member, reader.uint32(4) });
+        } break;
+        case SpvDecorationRowMajor:
+        case SpvDecorationColMajor:
+        {
+            ASSERT(word_count == 4);
+            intermediate->member_decorations[struct_type_id].push_back(
+                { decoration, member });
         } break;
         }
     } break;
@@ -222,7 +282,7 @@ void ParseInstruction(word_t opcode, size_t word_count, const StreamReader& read
         word_t rid = reader.uint32(1);
         word_t width = reader.uint32(2);
         word_t signedness = reader.uint32(3);
-        intermediate->primitive_types.emplace(rid, IntegerType { rid, width, signedness });
+        intermediate->primitive_types.emplace(rid, IntegerType_ { rid, width, signedness });
     } break;
     case SpvOpTypeFloat:
     {
@@ -230,7 +290,7 @@ void ParseInstruction(word_t opcode, size_t word_count, const StreamReader& read
         // %6 = OpTypeFloat 32
         word_t rid = reader.uint32(1);
         word_t width = reader.uint32(2);
-        intermediate->primitive_types.emplace(rid, FloatType { rid, width });
+        intermediate->primitive_types.emplace(rid, FloatType_ { rid, width });
     } break;
     case SpvOpTypeVector:
     {
@@ -239,8 +299,18 @@ void ParseInstruction(word_t opcode, size_t word_count, const StreamReader& read
         uint32_t rid = reader.uint32(1);
         uint32_t ctid = reader.uint32(2);
         uint32_t cc = reader.uint32(3);
-        intermediate->primitive_types.emplace(rid, VectorType { rid, ctid, cc });
+        intermediate->primitive_types.emplace(rid, VectorType_ { rid, ctid, cc });
 
+    } break;
+    case SpvOpTypeStruct:
+    {
+        ASSERT(word_count >= 2);
+        // %44 = OpTypeStruct %43 %43 %43
+        uint32_t rid = reader.uint32(1);
+        std::vector<word_t> member_ids;
+        for (uint32_t it = 2; it < word_count; it++)
+            member_ids.push_back(reader.uint32(it));
+        intermediate->struct_types.emplace(rid, StructType_ { rid, member_ids });
     } break;
     }
 }
@@ -273,7 +343,7 @@ public:
     PrimitiveParserHelper(ModuleType* module) : module_(module) {
     }
 
-    void operator()(const internal::FloatType& type) {
+    void operator()(const internal::FloatType_& type) {
         PrimitiveType p = {
             SpvOpTypeFloat,
             1,
@@ -282,7 +352,7 @@ public:
         module_->primitive_types.emplace(type.result_id, std::move(p));
     }
 
-    void operator()(const internal::IntegerType& type) {
+    void operator()(const internal::IntegerType_& type) {
         PrimitiveType p = {
             SpvOpTypeInt,
             1,
@@ -293,7 +363,7 @@ public:
         module_->primitive_types.emplace(type.result_id, std::move(p));
     }
 
-    void operator()(const internal::VectorType& type) {
+    void operator()(const internal::VectorType_& type) {
         PrimitiveType p = {};
 
         const auto& primitives = module_->primitive_types;
@@ -310,8 +380,73 @@ public:
     ModuleType* module_;
 };
 
-void VariableParser(const internal::Variable_& var, const internal::IntermediateType& intermediate,
-                    ModuleType* module) {
+void DecorateStruct(const internal::MemberDecoration_& deco, MemberType* m) {
+    switch (deco.decorator)
+    {
+    case SpvDecorationColMajor:
+        m->col_major = 1;
+        break;
+    case SpvDecorationOffset:
+        m->offset = deco.operand.value();
+        break;
+    case SpvDecorationMatrixStride:
+        m->matrix_stride = deco.operand.value();
+        break;
+    case SpvDecorationBuiltIn:
+        m->builtin = deco.operand.value();
+        break;
+    }
+
+}
+
+void ParseStruct(const internal::StructType_& var, const internal::IntermediateType& intermediate,
+                 ModuleType* module) {
+    uint32_t result_id = var.result_id;
+
+    std::vector<MemberType> members;
+
+    for (size_t i = 0; i < var.member_ids.size(); i++) {
+        const auto& names = intermediate.member_names.at(result_id);
+
+        MemberType member = {};
+        member.type_id = var.member_ids[i];
+        member.name = names.at(i);
+        members.emplace_back(std::move(member));
+    }
+
+    auto deco_it = intermediate.member_decorations.find(result_id);
+    if (deco_it != intermediate.member_decorations.end()) {
+        for (auto& deco : deco_it->second)
+            DecorateStruct(deco, &members[deco.member]);
+    }
+    std::optional<std::string> name;
+    auto name_it = intermediate.names.find(result_id);
+    if (name_it != intermediate.names.end())
+        name = name_it->second;
+
+    module->struct_types.emplace(result_id, StructType { name, members });
+}
+
+void DecorateVariable(const internal::Decoration_& deco, Variable* v) {
+    switch (deco.decorator)
+    {
+    case SpvDecorationBinding:
+        v->binding = deco.operand;
+        break;
+    case SpvDecorationDescriptorSet:
+        v->descriptor_set = deco.operand;
+        break;
+    case SpvDecorationLocation:
+        v->location = deco.operand;
+        break;
+    case SpvDecorationBuiltIn:
+        v->builtin = SpvBuiltIn(deco.operand);
+        break;
+    }
+}
+
+void ParseVariable(const internal::Variable_& var, const internal::IntermediateType& intermediate,
+                   ModuleType* module) {
     Variable v = {};
     uint32_t rid = var.result_id;
     v.type_id = var.result_type_id;
@@ -322,25 +457,9 @@ void VariableParser(const internal::Variable_& var, const internal::Intermediate
         v.type_id = pointer_it->second.type_id;
 
     auto deco_it = intermediate.decorations.find(rid);
-    if (deco_it != intermediate.decorations.end()) {
-        for (auto& deco : deco_it->second) {
-            switch (deco.decoration)
-            {
-            case SpvDecorationBinding:
-                v.binding = deco.operand; 
-                break;
-            case SpvDecorationDescriptorSet:
-                v.descriptor_set = deco.operand; 
-                break;
-            case SpvDecorationLocation:
-                v.location = deco.operand;
-                break;
-            case SpvDecorationBuiltIn:
-                v.builtin = SpvBuiltIn(deco.operand);
-                break;
-            }
-        }
-    }
+    if (deco_it != intermediate.decorations.end())
+        for (const auto& deco : deco_it->second)
+            DecorateVariable(deco, &v);
 
     auto name_it = intermediate.names.find(rid);
     if (name_it != intermediate.names.end())
@@ -361,8 +480,11 @@ SpirvReflections ReflectShader(const void* data, size_t size) {
     for (const auto& type : intermediate.primitive_types)
         std::visit(helper, type.second);
 
+    for (const auto& type : intermediate.struct_types)
+        ParseStruct(type.second, intermediate, &module);
+
     for (const auto& var : intermediate.variables) 
-        VariableParser(var.second, intermediate, &module);
+        ParseVariable(var.second, intermediate, &module);
 
     module.entry_points = intermediate.entry_points;
 

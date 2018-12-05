@@ -148,3 +148,18 @@ VariableRefList GetInterfaceVariableReferences(const ShaderModule& shader, const
         references.push_back(std::ref(shader.reflections.variables.at(id)));
     return std::move(references);
 }
+
+/*
+
+    if ((p_node->op != SpvOpVariable) ||
+        ((p_node->storage_class != SpvStorageClassUniform) && (p_node->storage_class != SpvStorageClassUniformConstant)))
+    {
+      continue;
+    }
+    if ((p_node->decorations.set.value == INVALID_VALUE) || (p_node->decorations.binding.value == INVALID_VALUE)) {
+      continue;
+    }
+
+    p_module->descriptor_binding_count += 1;
+
+*/
