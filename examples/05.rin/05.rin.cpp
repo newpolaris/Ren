@@ -26,6 +26,7 @@
 #include "macro.h"
 #include "shader_module.h"
 
+#define SUPPORT_MULTIFRAME_IN_FLIGHT 0
 #define CLUSTER_CULL 1
 
 // from boost
@@ -937,7 +938,9 @@ int main() {
         glfwPollEvents();
 
         auto fence = fences[current_frame];
+    #if SUPPORT_MULTIFRAME_IN_FLIGHT
         VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
+    #endif
 
         auto cpu_begin = std::chrono::steady_clock::now(); 
         auto semaphore = semaphores[current_frame];
@@ -1036,7 +1039,11 @@ int main() {
 
         auto cpu_end = std::chrono::steady_clock::now(); 
 
+    #if SUPPORT_MULTIFRAME_IN_FLIGHT
         auto next_frame = ((current_frame + 1) % kMaxFramesInFight);
+    #else
+        auto next_frame = current_frame;
+    #endif
 
         // 'VK_QUERY_RESULT_WAIT_BIT' seems not working
         auto wait_begin = std::chrono::steady_clock::now();
@@ -1065,7 +1072,9 @@ int main() {
                 wait_average, cpu_average, gpu_average, triangle_count, 1, trianglesPerSec);
         glfwSetWindowTitle(windows, title);
 
+    #if SUPPORT_MULTIFRAME_IN_FLIGHT
         current_frame = (current_frame + 1) % kMaxFramesInFight;
+    #endif
     }
 
     VK_ASSERT(vkDeviceWaitIdle(device));
