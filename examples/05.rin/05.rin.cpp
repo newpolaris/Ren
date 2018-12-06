@@ -559,12 +559,36 @@ VkSemaphore CreateSemaphore(VkDevice device, VkSemaphoreCreateFlags flags) {
     return semaphore;
 }
 
+std::vector<VkSemaphore> CreateSemaphore(VkDevice device, VkSemaphoreCreateFlags flags, size_t nums) {
+    std::vector<VkSemaphore> semaphores;
+    for (size_t i = 0; i < nums; i++) {
+        VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        info.flags = flags;
+        VkSemaphore semaphore = VK_NULL_HANDLE;
+        VK_ASSERT(vkCreateSemaphore(device, &info, nullptr, &semaphore));
+        semaphores.push_back(semaphore);
+    }
+    return semaphores;
+}
+
 VkFence CreateFence(VkDevice device, VkFenceCreateFlags flags) {
     VkFenceCreateInfo info { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
     info.flags = flags;
     VkFence fence = VK_NULL_HANDLE;
     VK_ASSERT(vkCreateFence(device, &info, nullptr, &fence));
     return fence;
+}
+
+std::vector<VkFence> CreateFence(VkDevice device, VkFenceCreateFlags flags, size_t nums) {
+    std::vector<VkFence> fences;
+    for (size_t i = 0; i < nums; i++) {
+        VkFenceCreateInfo info { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+        info.flags = flags;
+        VkFence fence = VK_NULL_HANDLE;
+        VK_ASSERT(vkCreateFence(device, &info, nullptr, &fence));
+        fences.push_back(fence);
+    }
+    return fences;
 }
 
 VkCommandBuffer CreateCommandBuffer(VkDevice device, VkCommandPool pool) {
@@ -575,6 +599,17 @@ VkCommandBuffer CreateCommandBuffer(VkDevice device, VkCommandPool pool) {
 
     VkCommandBuffer buffer = VK_NULL_HANDLE;
     VK_ASSERT(vkAllocateCommandBuffers(device, &info, &buffer));
+    return buffer;
+}
+
+std::vector<VkCommandBuffer> CreateCommandBuffer(VkDevice device, VkCommandPool pool, size_t num_chains) {
+    VkCommandBufferAllocateInfo info { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    info.commandPool = pool;
+    info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    info.commandBufferCount = num_chains;
+
+    std::vector<VkCommandBuffer> buffer(num_chains);
+    VK_ASSERT(vkAllocateCommandBuffers(device, &info, buffer.data()));
     return buffer;
 }
 
@@ -822,13 +857,17 @@ int main() {
     VK_ASSERT(vkCreateCommandPool(device, &info, nullptr, &command_pool));
     VK_ASSERT(vkResetCommandPool(device, command_pool, 0));
 
-    VkCommandBuffer command_buffer = CreateCommandBuffer(device, command_pool);
+    size_t chains = swapchain.imageviews.size();
+
+    std::vector<VkCommandBuffer> command_buffers = CreateCommandBuffer(device, command_pool, chains);
+
+    enum { kMaxFramesInFight = 2 };
 
     // cpu-gpu synchronize
-    VkFence fence = CreateFence(device, 0);
+    std::vector<VkFence> fences = CreateFence(device, 0, kMaxFramesInFight);
 
     // gpu-gpu synchronize
-    VkSemaphore semaphore = CreateSemaphore(device, 0);
+    std::vector<VkSemaphore> semaphores = CreateSemaphore(device, 0, kMaxFramesInFight);
     // VkSemaphore singal_semaphore = CreateSemaphore(device, 0);
 
 #if _DEBUG
@@ -892,13 +931,16 @@ int main() {
 
     double cpu_average = 0.0, gpu_average = 0.0, wait_average = 0.0;
 
+    size_t current_frame = 0;
+
     while(!glfwWindowShouldClose(windows)) {
         glfwPollEvents();
 
         auto cpu_begin = std::chrono::steady_clock::now(); 
+        auto semaphore = semaphores[current_frame];
 
-        uint32_t imageindex = 0;
-        VkResult result = vkAcquireNextImageKHR(device, swapchain.swapchain, ~0ull, semaphore, VK_NULL_HANDLE, &imageindex);
+        uint32_t image_index = 0;
+        VkResult result = vkAcquireNextImageKHR(device, swapchain.swapchain, ~0ull, semaphore, VK_NULL_HANDLE, &image_index);
 
         if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
             VK_ASSERT(vkDeviceWaitIdle(device));
@@ -911,6 +953,8 @@ int main() {
         } 
         ASSERT(result == VK_SUCCESS);
 
+        auto command_buffer = command_buffers[image_index];
+
         VK_ASSERT(vkResetCommandBuffer(command_buffer, 0));
         VkCommandBufferBeginInfo begininfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
         VK_ASSERT(vkBeginCommandBuffer(command_buffer, &begininfo));
@@ -922,7 +966,7 @@ int main() {
 
         VkRenderPassBeginInfo pass = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
         pass.renderPass = renderpass;
-        pass.framebuffer = swapchain.framebuffers[imageindex];
+        pass.framebuffer = swapchain.framebuffers[image_index];
         pass.renderArea = scissor;
         pass.clearValueCount = ARRAY_SIZE(clear_values);
         pass.pClearValues = clear_values;
@@ -975,13 +1019,15 @@ int main() {
         submit.commandBufferCount = 1;
         submit.pCommandBuffers = &command_buffer;
 
+        auto fence = fences[current_frame];
+
         VK_ASSERT(vkResetFences(device, 1, &fence));
         VK_ASSERT(vkQueueSubmit(command_queue, 1, &submit, fence));
 
         VkPresentInfoKHR present_info = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
         present_info.swapchainCount = 1;
         present_info.pSwapchains = &swapchain.swapchain;
-        present_info.pImageIndices = &imageindex;
+        present_info.pImageIndices = &image_index;
         // present_info.pWaitSemaphores = &singal_semaphore;
         // present_info.waitSemaphoreCount = 1;
         vkQueuePresentKHR(present_queue, &present_info);
@@ -1013,11 +1059,15 @@ int main() {
         sprintf(title, "wait: %.2f ms; cpu: %.2f ms; gpu: %.2f ms; triangles %d; meshlets %d; %.1fB tri/sec",
                 wait_average, cpu_average, gpu_average, triangle_count, 1, trianglesPerSec);
         glfwSetWindowTitle(windows, title);
+
+        current_frame = (current_frame + 1) % kMaxFramesInFight;
     }
 
     VK_ASSERT(vkDeviceWaitIdle(device));
-    vkDestroyFence(device, fence, nullptr);
-    vkDestroySemaphore(device, semaphore, nullptr);
+    for (auto fence : fences)
+        vkDestroyFence(device, fence, nullptr);
+    for (auto semaphore : semaphores)
+        vkDestroySemaphore(device, semaphore, nullptr);
 
     DestroyBuffer(device, &staging);
     DestroyBuffer(device, &vb);
