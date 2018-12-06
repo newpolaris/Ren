@@ -39,10 +39,9 @@ Mesh LoadMesh(const std::string& filename)
         int vti = obj.f[i * 3 + 1];
         int vni = obj.f[i * 3 + 2];
 
-        v.x = meshopt_quantizeHalf(NegativeIndexHelper(obj.v, vi, 0));
-        v.y = meshopt_quantizeHalf(NegativeIndexHelper(obj.v, vi, 1));
-        v.z = meshopt_quantizeHalf(NegativeIndexHelper(obj.v, vi, 2));
-        v.w = 0;
+        v.x = NegativeIndexHelper(obj.v, vi, 0);
+        v.y = NegativeIndexHelper(obj.v, vi, 1);
+        v.z = NegativeIndexHelper(obj.v, vi, 2);
         v.nx = uint8_t(NegativeIndexHelper(obj.vn, vni, 0) * 127.f + 127.f);
         v.ny = uint8_t(NegativeIndexHelper(obj.vn, vni, 1) * 127.f + 127.f);
         v.nz = uint8_t(NegativeIndexHelper(obj.vn, vni, 2) * 127.f + 127.f);
@@ -120,9 +119,11 @@ std::vector<Meshlet> BuildMeshlets(const Mesh& mesh) {
 }
 
 void BuildMeshletCones(Mesh* mesh) {
+    int zeroarea = 0;
     for (auto& meshlet : mesh->meshlets) {
         std::vector<float[3]> normals(kMeshTriangles);
 
+        uint32_t triangles = 0;
         for (uint16_t i = 0; i < meshlet.triangle_count; i++) {
             auto a = meshlet.indices[i * 3 + 0];
             auto b = meshlet.indices[i * 3 + 1];
@@ -132,12 +133,12 @@ void BuildMeshletCones(Mesh* mesh) {
             const auto& vb = mesh->vertices[meshlet.vertices[b]];
             const auto& vc = mesh->vertices[meshlet.vertices[c]];
 
-            float p0[3] = { HalfToFloat(va.x), HalfToFloat(va.y), HalfToFloat(va.z) };
-            float p1[3] = {HalfToFloat(vb.x), HalfToFloat(vb.y), HalfToFloat(vb.z)};
-            float p2[3] = {HalfToFloat(vc.x), HalfToFloat(vc.y), HalfToFloat(vc.z)};
+            float p0[3] = { va.x, va.y, va.z };
+            float p1[3] = { vb.x, vb.y, vb.z };
+            float p2[3] = { vc.x, vc.y, vc.z };
 
-            float p10[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]};
-            float p20[3] = {p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]};
+            float p10[3] = { p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2] };
+            float p20[3] = { p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2] };
 
             // cross(p10, p20)
             float normalx = p10[1] * p20[2] - p10[2] * p20[1];
@@ -145,48 +146,51 @@ void BuildMeshletCones(Mesh* mesh) {
             float normalz = p10[0] * p20[1] - p10[1] * p20[0];
 
             float area = sqrtf(normalx*normalx + normaly*normaly + normalz*normalz);
+            zeroarea += area == 0.f;
             float invarea = area == 0.f ? 0.f : 1.f / area;
 
-            normals[i][0] = normalx * invarea;
-            normals[i][1] = normaly * invarea;
-            normals[i][2] = normalz * invarea;
+            normals[triangles][0] = normalx * invarea;
+            normals[triangles][1] = normaly * invarea;
+            normals[triangles][2] = normalz * invarea;
+
+            triangles++;
         }
 
-        float normal[4] = {};
-        for (int i = 0; i < meshlet.triangle_count; i++)
+        float avgnormal[3] = {};
+        for (int i = 0; i < triangles; i++)
             for (int t = 0; t < 3; t++)
-                normal[t] += normals[i][t];
+                avgnormal[t] += normals[i][t];
 
         for (int t = 0; t < 3; t++)
-            normal[t] /= meshlet.triangle_count;
+            avgnormal[t] /= triangles;
 
-        float length = sqrtf(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+        float length = sqrtf(avgnormal[0] * avgnormal[0] + avgnormal[1] * avgnormal[1] + avgnormal[2] * avgnormal[2]);
         if (length <= 0.f)
         {
-            normal[0] = 1.f;
-            normal[1] = 0.f;
-            normal[2] = 0.f;
-            normal[3] = 1.f;
+            avgnormal[0] = 1.f;
+            avgnormal[1] = 0.f;
+            avgnormal[2] = 0.f;
         }
         else
         {
             float inverseLength = 1.f / length;
             for (int t = 0; t < 3; t++)
-                normal[t] *= inverseLength;
-
-            float mindp = 1.f;
-            for (int i = 0; i < meshlet.triangle_count; i++)
-            {
-                float dp = 0.f;
-                for (int t = 0; t < 3; t++)
-                    dp += normals[i][t] * normal[t];
-                mindp = std::min(mindp, dp);
-            }
-            normal[3] = mindp <= 0.f ? 1 : sqrtf(1 - mindp * mindp);
+                avgnormal[t] *= inverseLength;
         }
-        for (int t = 0; t < 4; t++)
-            meshlet.cone[t] = normal[t];
+
+        float mindp = 1.f;
+        for (int i = 0; i < triangles; i++)
+        {
+            float dp = normals[i][0] * avgnormal[0] + normals[i][1] * avgnormal[1] + normals[i][2] * avgnormal[2];
+            mindp = std::min(mindp, dp);
+        }
+        float conew = mindp <= 0.f ? 1 : sqrtf(1 - mindp * mindp);
+        meshlet.cone[0] = avgnormal[0];
+        meshlet.cone[1] = avgnormal[1];
+        meshlet.cone[2] = avgnormal[2];
+        meshlet.cone[3] = conew;
     }
+    printf("zero area %d\n", zeroarea);
 }
 
 void BuildMeshletIndices(Mesh* mesh) {

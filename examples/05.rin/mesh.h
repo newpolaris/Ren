@@ -11,7 +11,7 @@ struct alignas(16) MeshDraw
 
 struct alignas(16) Vertex
 {
-    uint16_t x, y, z, w;
+    float x, y, z;
     uint8_t nx, ny, nz, nw;
     uint16_t tu, tv;
 };

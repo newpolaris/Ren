@@ -881,7 +881,7 @@ int main() {
 
     VkQueryPool timestamp_pool = CreateQueryPool(device, VK_QUERY_TYPE_TIMESTAMP, 1024, 0);
 
-    uint32_t row_count = 10;
+    uint32_t row_count = 1;
     uint32_t draw_count = row_count*row_count;
     std::vector<MeshDraw> draws(draw_count);
     for (uint32_t i = 0; i < draw_count; i++) {

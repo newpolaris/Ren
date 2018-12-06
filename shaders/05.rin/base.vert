@@ -1,15 +1,13 @@
 #version 450
 #extension GL_EXT_shader_16bit_storage: require
 #extension GL_EXT_shader_8bit_storage: require
-#extension GL_KHX_shader_explicit_arithmetic_types: require
-#extension GL_KHX_shader_explicit_arithmetic_types_float16: require
 
 #extension GL_GOOGLE_include_directive: require 
 
 #define FVF 0
 
 struct Vertex {
-    f16vec4 position; 
+    vec3 position; 
     u8vec3 normal;
     f16vec2 texcoords;
 };
