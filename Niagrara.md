@@ -9,7 +9,7 @@ VK_MEMORY_PROPERTY_HOST_CACHED_BIT - gpu fills buffer and you want to read that
 
 > 'Optimize mesh rendering'
 
-0:03:00 - triangle 1087474 in 2.3ms result is not fast, because envrionment is RTX 2080
+0:03:00 - triangle 1087474 in 2.3ms result is not fast, because environment is RTX 2080
 0:08:57 - test present mode immediate, disable V-sync
 0:29:21 - in a real vulkan application you need some sort of upload syn management might to use transfer queues
          (http://lifeisforu.tistory.com/404?category=837815 에서는 공용 17개, 전송 전용이 1개. 전용이 존재하는 경우 그것을 사용한다고 했다)
@@ -21,7 +21,7 @@ VK_MEMORY_PROPERTY_HOST_CACHED_BIT - gpu fills buffer and you want to read that
           5 ~ 10 billion 이 결과 예상값이고 5 정도 나오면 그 결과에 만족할 수 있음.
 1:04:20 - N triangle > n/2 vertices (minecraft 같은건 nx2)
           upto 128 and one is used by gl_primitiveCountNV (so, 127) and makes divided by 3. up to 42 triangles
-1:09:12 - vertex data: 16 KB / meshlet & 64 vertices > 16 * 1024 / 64 > 256 byte per vertex
+1:09:12 - vertex data: 16 KB / meshlet & 64 vertices -> 16 * 1024 / 64 -> 256 byte per vertex
           index data: 128 byte chuck (4 bytes for count of primitive) and 1 byte per index (so limited to 2^8 = 256))
           if use 128x3 then (128x3 - 4) index > 126 triangles
           if use 128x2 then (128x2 - 4) index >  84 triangles
@@ -73,8 +73,13 @@ VK_MEMORY_PROPERTY_HOST_CACHED_BIT - gpu fills buffer and you want to read that
 
 - 5x5 buddha, Nvida 660m, 10만 삼각형, one commandbuffer with wait command queue
  
-          'basic' 'optimize lib' '16bit vertex fetch'
+          'basic' 'optimize lib' '16bit vertex fetch' 
     FVF :  0.2b        0.7b              0.7b 
-    PUSH:  0.2b        0.7b              0.7b
+    PUSH:  0.2b        0.4b              0.7b
 
     10x10 으로 바꿨을 때 0.8 / 추가로 texture coordinate 없앴지만 0.8 로 동일하다.
+    cluster culling의 경우 kitty는 20% 가 줄어서 1.0b 까지 올랐으나,
+                           budda는 meshopt 로 수행했음에도 3% 미만만 준다. 0.8b 까지 됨
+
+                           
+

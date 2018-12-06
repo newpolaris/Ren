@@ -41,6 +41,5 @@ struct Mesh
 
 Mesh LoadMesh(const std::string& filename);
 std::vector<Meshlet> BuildMeshlets(const Mesh& mesh);
-void BuildMeshletCones(Mesh* mesh);
 void BuildMeshletIndices(Mesh* mesh);
 
