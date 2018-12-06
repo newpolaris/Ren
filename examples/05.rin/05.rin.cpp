@@ -864,11 +864,11 @@ int main() {
     enum { kMaxFramesInFight = 2 };
 
     // cpu-gpu synchronize
-    std::vector<VkFence> fences = CreateFence(device, 0, kMaxFramesInFight);
+    std::vector<VkFence> fences = CreateFence(device, VK_FENCE_CREATE_SIGNALED_BIT, kMaxFramesInFight);
 
     // gpu-gpu synchronize
     std::vector<VkSemaphore> semaphores = CreateSemaphore(device, 0, kMaxFramesInFight);
-    // VkSemaphore singal_semaphore = CreateSemaphore(device, 0);
+    std::vector<VkSemaphore> signal_semaphores = CreateSemaphore(device, 0, kMaxFramesInFight);
 
 #if _DEBUG
     const char* objfile = "models/kitten.obj";
@@ -936,8 +936,12 @@ int main() {
     while(!glfwWindowShouldClose(windows)) {
         glfwPollEvents();
 
+        auto fence = fences[current_frame];
+        VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
+
         auto cpu_begin = std::chrono::steady_clock::now(); 
         auto semaphore = semaphores[current_frame];
+        auto signal_semaphore = signal_semaphores[current_frame];
 
         uint32_t image_index = 0;
         VkResult result = vkAcquireNextImageKHR(device, swapchain.swapchain, ~0ull, semaphore, VK_NULL_HANDLE, &image_index);
@@ -959,7 +963,7 @@ int main() {
         VkCommandBufferBeginInfo begininfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
         VK_ASSERT(vkBeginCommandBuffer(command_buffer, &begininfo));
 
-        vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 0);
+        vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, current_frame*2);
 
         VkClearColorValue clear_color = { std::sin(static_cast<float>(glfwGetTime()))*0.5f + 0.5f, 0.5f, 0.5f, 1.0f };
         const VkClearValue clear_values[] = { clear_color, };
@@ -1005,7 +1009,7 @@ int main() {
         }
         vkCmdEndRenderPass(command_buffer);
 
-        vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 1);
+        vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, current_frame*2+1);
 
         VK_ASSERT(vkEndCommandBuffer(command_buffer));
 
@@ -1014,12 +1018,10 @@ int main() {
         submit.waitSemaphoreCount = 1;
         submit.pWaitSemaphores = &semaphore;
         submit.pWaitDstStageMask = stage_flags;
-        // submit.signalSemaphoreCount = 1;
-        // submit.pSignalSemaphores = &singal_semaphore;
+        submit.signalSemaphoreCount = 1;
+        submit.pSignalSemaphores = &signal_semaphore;
         submit.commandBufferCount = 1;
         submit.pCommandBuffers = &command_buffer;
-
-        auto fence = fences[current_frame];
 
         VK_ASSERT(vkResetFences(device, 1, &fence));
         VK_ASSERT(vkQueueSubmit(command_queue, 1, &submit, fence));
@@ -1028,19 +1030,22 @@ int main() {
         present_info.swapchainCount = 1;
         present_info.pSwapchains = &swapchain.swapchain;
         present_info.pImageIndices = &image_index;
-        // present_info.pWaitSemaphores = &singal_semaphore;
-        // present_info.waitSemaphoreCount = 1;
+        present_info.pWaitSemaphores = &signal_semaphore;
+        present_info.waitSemaphoreCount = 1;
         vkQueuePresentKHR(present_queue, &present_info);
 
         auto cpu_end = std::chrono::steady_clock::now(); 
 
+        auto next_frame = ((current_frame + 1) % kMaxFramesInFight);
+
         // 'VK_QUERY_RESULT_WAIT_BIT' seems not working
         auto wait_begin = std::chrono::steady_clock::now();
-        VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
+        // wait until query result get
+        VK_ASSERT(vkWaitForFences(device, 1, &fences[next_frame], TRUE, ~0ull));
         auto wait_end = std::chrono::steady_clock::now();
 
         uint64_t timestamps[2] = {};
-        vkGetQueryPoolResults(device, timestamp_pool, 0, 2, sizeof(timestamps), timestamps,
+        vkGetQueryPoolResults(device, timestamp_pool, next_frame*2, 2, sizeof(timestamps), timestamps,
                               sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
 
         auto wait_time = std::chrono::duration<double, std::milli>(wait_end - wait_begin).count();
@@ -1067,6 +1072,8 @@ int main() {
     for (auto fence : fences)
         vkDestroyFence(device, fence, nullptr);
     for (auto semaphore : semaphores)
+        vkDestroySemaphore(device, semaphore, nullptr);
+    for (auto semaphore : signal_semaphores)
         vkDestroySemaphore(device, semaphore, nullptr);
 
     DestroyBuffer(device, &staging);
