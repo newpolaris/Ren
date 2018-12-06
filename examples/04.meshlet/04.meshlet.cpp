@@ -85,7 +85,9 @@ struct Mesh
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     std::vector<Meshlet> meshlets;
+    // meshlet indices for rendering mesh in standard vertex shader; just pre interpreted meshlet index look up
     std::vector<uint32_t> meshletIndices;
+    // devide mehsletIndices per meshlet instance
     std::vector<std::pair<uint32_t, uint32_t>> meshletInstances;
 };
 
@@ -278,7 +280,7 @@ void buildMeshletCones(Mesh& mesh)
                 float dp = 0.f;
                 for (int t = 0; t < 3; t++)
                     dp += normals[i][t]*normal[t];
-                mindp = glm::min(mindp, dp);
+                mindp = std::min(mindp, dp);
             }
             normal[3] = mindp <= 0.f ? 1 : sqrtf(1 - mindp * mindp);
         }
@@ -451,7 +453,7 @@ private:
         vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
 
         Mesh mesh;
-    #if !_DEBUG
+    #if _DEBUG
         const char* objfile = "models/kitten.obj";
     #else
         const char* objfile = "models/buddha.obj";
@@ -494,15 +496,15 @@ private:
         createBuffer(mb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         Buffer mib = {};
         createBuffer(mib, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        // muliple indirect draw buffer for culled meshlet cluster
         Buffer cb = {};
         createBuffer(cb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, vb, scratch, mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, ib, scratch, mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, mb, scratch, mesh.meshlets.data(), mesh.meshlets.size() * sizeof(Meshlet));
-        // build meshlet indices for rendering mesh in standard vertex shader;
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, mib, scratch, mesh.meshletIndices.data(), mesh.meshletIndices.size() * sizeof(uint32_t));
-        // muliple indirect draw buffer for c-ulled meshlet cluster
         uploadBuffer(device, commandPool, commandBuffer, graphicsQueue, cb, scratch, indirectCommands.data(), indirectCommands.size() * sizeof(VkDrawIndexedIndirectCommand));
 
         VkQueryPool queryPool = createQueryPool(device, 128);

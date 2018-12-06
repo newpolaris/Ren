@@ -74,5 +74,7 @@ VK_MEMORY_PROPERTY_HOST_CACHED_BIT - gpu fills buffer and you want to read that
 - 5x5 buddha, Nvida 660m, 10만 삼각형, one commandbuffer with wait command queue
  
           'basic' 'optimize lib' '16bit vertex fetch'
-    FVF :  0.2b        0.7b               
-    PUSH:  0.2b        0.4b             
+    FVF :  0.2b        0.7b              0.7b 
+    PUSH:  0.2b        0.7b              0.7b
+
+    10x10 으로 바꿨을 때 0.8 / 추가로 texture coordinate 없앴지만 0.8 로 동일하다.

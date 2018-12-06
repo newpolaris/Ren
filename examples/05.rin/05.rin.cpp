@@ -27,7 +27,7 @@
 #include "macro.h"
 #include "shader_module.h"
 
-#define FVF 0
+#define CLUSTER_CULL 1
 
 // from boost
 template <class integral, class size_t>
@@ -51,17 +51,34 @@ struct alignas(16) MeshDraw
 	float scale[2];
 };
 
-struct Vertex
+struct alignas(16) Vertex
 {
     uint16_t x, y, z, w;
     uint8_t nx, ny, nz, nw;
     uint16_t tu, tv;
 };
 
+enum { kMeshVertices = 64 };
+enum { kMeshTriangles = 126 };
+
+struct Meshlet
+{
+    float cone[4];
+    uint32_t vertices[kMeshVertices]; // save reference index of global vertex index
+    uint8_t indices[kMeshTriangles * 3];
+    uint8_t vertex_count;
+    uint8_t triangle_count;
+};
+
 struct Mesh
 {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+    std::vector<Meshlet> meshlets;
+    // meshlet indices for rendering mesh in standard vertex shader; just pre interpreted meshlet index look up
+    std::vector<uint32_t> meshlet_indices;
+    // devide mehsletIndices per meshlet instance
+    std::vector<std::pair<uint32_t, uint32_t>> meshlet_instances;
 };
 
 float NegativeIndexHelper(float* src, int i, int sub)
@@ -74,7 +91,7 @@ Mesh LoadMesh(const std::string& filename)
     ObjFile obj;
     objParseFile(obj, filename.c_str());
 
-    size_t index_count = obj.f_size / 3; 
+    size_t index_count = obj.f_size / 3;
     std::vector<Vertex> vertices(index_count);
 
     for (size_t i = 0; i < index_count; i++)
@@ -99,22 +116,177 @@ Mesh LoadMesh(const std::string& filename)
 
     std::vector<uint32_t> indices(index_count);
 
-    if (false) {
-        for (uint32_t i = 0; i < static_cast<uint32_t>(index_count); i++)
-            indices[i] = i;
-    } else {
-        std::vector<uint32_t> remap(index_count);
-        size_t vertex_count = meshopt_generateVertexRemap(remap.data(), 0, index_count, vertices.data(), index_count, sizeof(Vertex));
+    std::vector<uint32_t> remap(index_count);
+    size_t vertex_count = meshopt_generateVertexRemap(remap.data(), 0, index_count, vertices.data(), index_count, sizeof(Vertex));
 
-        vertices.resize(vertex_count);
+    vertices.resize(vertex_count);
 
-        meshopt_remapVertexBuffer(vertices.data(), vertices.data(), index_count, sizeof(Vertex), remap.data());
-        meshopt_remapIndexBuffer(indices.data(), 0, index_count, remap.data());
+    meshopt_remapVertexBuffer(vertices.data(), vertices.data(), index_count, sizeof(Vertex), remap.data());
+    meshopt_remapIndexBuffer(indices.data(), 0, index_count, remap.data());
 
-        meshopt_optimizeVertexCache(indices.data(), indices.data(), index_count, vertex_count);
-        meshopt_optimizeVertexFetch(vertices.data(), indices.data(), index_count, vertices.data(), vertex_count, sizeof(Vertex));
+    meshopt_optimizeVertexCache(indices.data(), indices.data(), index_count, vertex_count);
+    meshopt_optimizeVertexFetch(vertices.data(), indices.data(), index_count, vertices.data(), vertex_count, sizeof(Vertex));
+
+    return Mesh{std::move(vertices), std::move(indices)};
+}
+
+// Use Arseny Kapoulkine's code
+std::vector<Meshlet> BuildMeshlets(const Mesh& mesh) {
+    std::vector<Meshlet> meshlets;
+
+    Meshlet let = {};
+    std::vector<uint8_t> table(mesh.vertices.size(), 0xff);
+
+    for (uint32_t i = 0; i < mesh.indices.size(); i += 3) {
+
+        uint32_t ai = mesh.indices[i + 0];
+        uint32_t bi = mesh.indices[i + 1];
+        uint32_t ci = mesh.indices[i + 2];
+
+        uint8_t& a = table[ai];
+        uint8_t& b = table[bi];
+        uint8_t& c = table[ci];
+
+        uint32_t extra = (a == 0xff) + (b == 0xff) + (c == 0xff);
+        // vertex_count indicated to end()
+        if (let.vertex_count + extra > kMeshVertices || let.triangle_count >= kMeshTriangles) {
+            meshlets.push_back(let);
+
+            for (size_t j = 0; j < let.vertex_count; j++)
+                table[let.vertices[j]] = 0xff;
+            let = {};
+        }
+
+        if (a == 0xff) {
+            a = let.vertex_count;
+            let.vertices[let.vertex_count++] = ai;
+        }
+
+        if (b == 0xff) {
+            b = let.vertex_count;
+            let.vertices[let.vertex_count++] = bi;
+        }
+
+        if (c == 0xff) {
+            c = let.vertex_count;
+            let.vertices[let.vertex_count++] = ci;
+        }
+
+        uint32_t index = let.triangle_count * 3;
+        let.indices[index + 0] = a;
+        let.indices[index + 1] = b;
+        let.indices[index + 2] = c;
+        let.triangle_count++;
     }
-    return Mesh { std::move(vertices), std::move(indices) };
+    if (let.triangle_count)
+        meshlets.push_back(let);
+    return std::move(meshlets);
+}
+
+float HalfToFloat(uint16_t v)
+{
+    uint16_t sign = v >> 15;
+    uint16_t exp = (v >> 10) & 31;
+    uint16_t man = v & 1023;
+
+    assert(exp != 31);
+    if (exp == 0)
+    {
+        assert(man == 0);
+        return 0.f;
+    }
+    return (sign == 0 ? 1.f : -1.f) * ldexpf(float(man + 1024) / 1024.f, exp - 15);
+}
+
+// Use Arseny Kapoulkine's code
+void BuildMeshletCones(Mesh* mesh) {
+    for (auto& meshlet : mesh->meshlets) {
+        std::vector<float[3]> normals(kMeshTriangles);
+
+        for (uint16_t i = 0; i < meshlet.triangle_count; i++) {
+            auto a = meshlet.indices[i * 3 + 0];
+            auto b = meshlet.indices[i * 3 + 1];
+            auto c = meshlet.indices[i * 3 + 2];
+
+            const auto& va = mesh->vertices[meshlet.vertices[a]];
+            const auto& vb = mesh->vertices[meshlet.vertices[b]];
+            const auto& vc = mesh->vertices[meshlet.vertices[c]];
+
+            float p0[3] = {HalfToFloat(va.x), HalfToFloat(va.y), HalfToFloat(va.z)};
+            float p1[3] = {HalfToFloat(vb.x), HalfToFloat(vb.y), HalfToFloat(vb.z)};
+            float p2[3] = {HalfToFloat(vc.x), HalfToFloat(vc.y), HalfToFloat(vc.z)};
+
+            float p10[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]};
+            float p20[3] = {p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]};
+
+            // cross(p10, p20)
+            float normalx = p10[1] * p20[2] - p10[2] * p20[1];
+            float normaly = p10[2] * p20[0] - p10[0] * p20[2];
+            float normalz = p10[0] * p20[1] - p10[1] * p20[0];
+
+            float area = sqrtf(normalx*normalx + normaly*normaly + normalz*normalz);
+            float invarea = area == 0.f ? 0.f : 1.f / area;
+
+            normals[i][0] = normalx * invarea;
+            normals[i][1] = normaly * invarea;
+            normals[i][2] = normalz * invarea;
+        }
+
+        float normal[4] = {};
+        for (int i = 0; i < meshlet.triangle_count; i++)
+            for (int t = 0; t < 3; t++)
+                normal[t] += normals[i][t];
+
+        for (int t = 0; t < 3; t++)
+            normal[t] /= meshlet.triangle_count;
+
+        float length = sqrtf(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+        if (length <= 0.f)
+        {
+            normal[0] = 1.f;
+            normal[1] = 0.f;
+            normal[2] = 0.f;
+            normal[3] = 1.f;
+        }
+        else
+        {
+            float inverseLength = 1.f / length;
+            for (int t = 0; t < 3; t++)
+                normal[t] *= inverseLength;
+
+            float mindp = 1.f;
+            for (int i = 0; i < meshlet.triangle_count; i++)
+            {
+                float dp = 0.f;
+                for (int t = 0; t < 3; t++)
+                    dp += normals[i][t] * normal[t];
+                mindp = std::min(mindp, dp);
+            }
+            normal[3] = mindp <= 0.f ? 1 : sqrtf(1 - mindp * mindp);
+        }
+        for (int t = 0; t < 4; t++)
+            meshlet.cone[t] = normal[t];
+    }
+}
+
+void BuildMeshletIndices(Mesh* mesh) {
+    uint32_t cnt = 0;
+    std::vector<uint32_t> meshlet_indices(mesh->indices.size());
+    for (const auto& meshlet : mesh->meshlets) {
+        uint32_t start = cnt;
+        for (uint32_t k = 0; k < uint32_t(meshlet.triangle_count) * 3; k++)
+            meshlet_indices[cnt++] = meshlet.vertices[meshlet.indices[k]];
+        mesh->meshlet_instances.push_back({start, cnt - start});
+    }
+    mesh->meshlet_indices = meshlet_indices;
+
+#if _DEBUG
+    size_t culled = 0;
+    for (const Meshlet& meshlet : mesh->meshlets)
+        if (meshlet.cone[2] > meshlet.cone[3])
+            culled++;
+    printf("Culled meshlets: %d/%d\n", int(culled), int(mesh->meshlets.size()));
+#endif
 }
 
 VkInstance CreateInstance(
@@ -566,25 +738,9 @@ VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass
     VkPipelineShaderStageCreateInfo fragment_info = GetPipelineShaderStageCreateInfo(fs, "main");
     VkPipelineShaderStageCreateInfo shader_stages[] = { vertex_info, fragment_info };
 
-#if FVF
-    VkVertexInputBindingDescription bindings[] = { { 0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX } };
-
-    VkVertexInputAttributeDescription attributes[] = { 
-        { 0, 0, VK_FORMAT_R16G16B16A16_SFLOAT, offsetof(Vertex, x) },
-        { 1, 0, VK_FORMAT_R8G8B8A8_UINT, offsetof(Vertex, nx) },
-        { 2, 0, VK_FORMAT_R16G16_SFLOAT, offsetof(Vertex, tu) },
-    };
-#endif
-
     VkPipelineVertexInputStateCreateInfo vertex_input_info { 
         VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO 
     };
-#if FVF
-    vertex_input_info.vertexBindingDescriptionCount = ARRAY_SIZE(bindings);
-    vertex_input_info.pVertexBindingDescriptions = bindings;
-    vertex_input_info.vertexAttributeDescriptionCount = 3;
-    vertex_input_info.pVertexAttributeDescriptions = attributes;
-#endif
 
     VkPipelineInputAssemblyStateCreateInfo input_info { 
         VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO 
@@ -791,6 +947,28 @@ VkQueryPool CreateQueryPool(VkDevice device, VkQueryType type, uint32_t count,
     return pool;
 }
 
+// Create on indirect command for each mesh in the scene
+std::vector<VkDrawIndexedIndirectCommand> CreateIndirectCommandBuffer(const Mesh& mesh) {
+    std::vector<VkDrawIndexedIndirectCommand> commands;
+
+    for (size_t i = 0; i < mesh.meshlet_instances.size(); i++)
+    {
+        auto cone = mesh.meshlets[i].cone;
+        auto cosangle = glm::dot(glm::vec3(cone[0], cone[1], cone[2]), glm::vec3(0, 0, 1));
+        if (cone[3] < cosangle)
+            continue;
+
+        VkDrawIndexedIndirectCommand indirectCmd {};
+        indirectCmd.instanceCount = 1;
+        indirectCmd.firstInstance = uint32_t(i);
+        indirectCmd.firstIndex = mesh.meshlet_instances[i].first;
+        indirectCmd.indexCount = mesh.meshlet_instances[i].second;
+        
+        commands.push_back(indirectCmd);
+    }
+    return std::move(commands);
+}
+
 static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
                                                     VkDebugUtilsMessageTypeFlagsEXT messageType,
                                                     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
@@ -904,6 +1082,12 @@ int main() {
 #endif
 
     Mesh mesh = LoadMesh(objfile);
+    mesh.meshlets = BuildMeshlets(mesh);
+    BuildMeshletCones(&mesh);
+    BuildMeshletIndices(&mesh);
+
+    std::vector<VkDrawIndexedIndirectCommand> indirects = CreateIndirectCommandBuffer(mesh);
+    uint32_t indirect_draw_count = static_cast<uint32_t>(indirects.size());
 
     VkMemoryPropertyFlags device_local_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     VkMemoryPropertyFlags host_memory_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
@@ -911,6 +1095,8 @@ int main() {
 
     const VkDeviceSize vb_size = sizeof(Vertex)*mesh.vertices.size();
     const VkDeviceSize ib_size = sizeof(uint32_t)*mesh.indices.size();
+    const VkDeviceSize mib_size = mesh.meshlet_indices.size() * sizeof(uint32_t);
+    const VkDeviceSize idcb_size = indirects.size() * sizeof(VkDrawIndexedIndirectCommand);
 
     Buffer staging = CreateBuffer(device, physical_properties.memory, { 
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host_memory_flags, 1024*1024*64});
@@ -923,12 +1109,23 @@ int main() {
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, ib_size });
 
+    Buffer mib = CreateBuffer(device, physical_properties.memory, {
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        device_local_flags, mib_size });
+
+    // muliple indirect draw buffer for drawing culled meshlet cluster
+    Buffer idcb = CreateBuffer(device, physical_properties.memory, {
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        device_local_flags, idcb_size });
+
     UploadBuffer(device, command_pool, command_queue, staging, vb, vb_size, mesh.vertices.data());
     UploadBuffer(device, command_pool, command_queue, staging, ib, ib_size, mesh.indices.data());
+    UploadBuffer(device, command_pool, command_queue, staging, mib, mib_size, mesh.meshlet_indices.data());
+    UploadBuffer(device, command_pool, command_queue, staging, idcb, idcb_size, indirects.data());
 
     VkQueryPool timestamp_pool = CreateQueryPool(device, VK_QUERY_TYPE_TIMESTAMP, 1024, 0);
 
-    uint32_t row_count = 5;
+    uint32_t row_count = 10;
     uint32_t draw_count = row_count*row_count;
     std::vector<MeshDraw> draws(draw_count);
     for (uint32_t i = 0; i < draw_count; i++) {
@@ -980,10 +1177,6 @@ int main() {
         vkCmdSetViewport(command_buffer, 0, 1, &viewport);
         vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
-    #if FVF
-        VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(command_buffer, 0, 1, &vb.buffer, &offset);
-    #else
         VkDescriptorBufferInfo buffer_info = {};
         buffer_info.buffer = vb.buffer;
         buffer_info.offset = 0;
@@ -996,12 +1189,20 @@ int main() {
         desc_set.pBufferInfo = &buffer_info;
 
         vkCmdPushDescriptorSetKHR(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &desc_set);
-    #endif
+
+    #if CLUSTER_CULL
+        vkCmdBindIndexBuffer(command_buffer, mib.buffer, 0, VK_INDEX_TYPE_UINT32);
+    #else
         vkCmdBindIndexBuffer(command_buffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
+    #endif
 
         for (auto draw : draws) {
             vkCmdPushConstants(command_buffer, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(draw), &draw);
+        #if CLUSTER_CULL
+            vkCmdDrawIndexedIndirect(command_buffer, idcb.buffer, 0, indirect_draw_count, sizeof(VkDrawIndexedIndirectCommand));
+        #else
             vkCmdDrawIndexed(command_buffer, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
+        #endif
         }
         vkCmdEndRenderPass(command_buffer);
 
@@ -1034,8 +1235,7 @@ int main() {
 
         // 'VK_QUERY_RESULT_WAIT_BIT' seems not working
         auto wait_begin = std::chrono::steady_clock::now();
-        // VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
-        VK_ASSERT(vkQueueWaitIdle(command_queue));
+        VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
         auto wait_end = std::chrono::steady_clock::now();
 
         uint64_t timestamps[2] = {};
@@ -1067,6 +1267,8 @@ int main() {
     DestroyBuffer(device, &staging);
     DestroyBuffer(device, &vb);
     DestroyBuffer(device, &ib);
+    DestroyBuffer(device, &mib);
+    DestroyBuffer(device, &idcb);
 
     vkDestroyQueryPool(device, timestamp_pool, nullptr);
 
