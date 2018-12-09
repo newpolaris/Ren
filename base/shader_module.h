@@ -9,7 +9,7 @@ struct ShaderModule
     spirv::SpirvReflections reflections;
 };
 
-using ShaderModuleList = std::initializer_list<ShaderModule>;
+using ShaderModules = std::initializer_list<ShaderModule>;
 
 struct InputInterfaceAttribute
 {
@@ -30,5 +30,4 @@ VariableRefList GetInterfaceVariableReferences(const ShaderModule& shader, const
 std::optional<InputInterfaceAttribute> FindVariable(const InputInterfaceAttributeList& list, const std::string& name);
 
 VkPipelineShaderStageCreateInfo GetPipelineShaderStageCreateInfo(const ShaderModule& shader, const std::string& name);
-std::vector<VkPushConstantRange> GetPushConstantRange(const ShaderModuleList shaders);
-
+std::vector<VkPushConstantRange> GetPushConstantRange(const ShaderModules shaders);

@@ -29,6 +29,8 @@ VkShaderStageFlagBits GetShaderStageBit(SpvExecutionModel model)
             return VK_SHADER_STAGE_VERTEX_BIT;
         case SpvExecutionModelFragment:
             return VK_SHADER_STAGE_FRAGMENT_BIT;
+        case SpvExecutionModelGLCompute:
+            return VK_SHADER_STAGE_COMPUTE_BIT;
         case SpvExecutionModelTaskNV:
             return VK_SHADER_STAGE_TASK_BIT_NV;
         case SpvExecutionModelMeshNV:
@@ -171,7 +173,7 @@ VkPipelineShaderStageCreateInfo GetPipelineShaderStageCreateInfo(const ShaderMod
     return std::move(info);
 }
 
-std::vector<VkPushConstantRange> GetPushConstantRange(const ShaderModuleList shaders) {
+std::vector<VkPushConstantRange> GetPushConstantRange(const ShaderModules shaders) {
     std::vector<VkPushConstantRange> ranges;
     for (auto& shader : shaders) {
         auto& reflection = shader.reflections;

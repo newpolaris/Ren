@@ -458,22 +458,40 @@ VkDescriptorSet CreateDescriptorSet(VkDevice device, VkDescriptorPool pool) {
     return sets;
 }
 
-VkPipelineLayout CreatePipelineLayout(VkDevice device, ShaderModuleList shaders) {
-    std::vector<VkPushConstantRange> ranges = GetPushConstantRange(shaders);
+VkPipelineLayout CreatePipelineLayout(VkDevice device, ShaderModules shaders) {
+    std::vector<VkShaderStageFlags> stages(32);
 
-    VkDescriptorSetLayoutBinding set_binding {};
-    set_binding.binding = 0;
-    set_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    set_binding.descriptorCount = 1;
-    set_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    for (auto& shader : shaders) 
+        for (auto& var : shader.reflections.variables) {
+            VkShaderStageFlags flags = 0;
+            if (shader.reflections.entry_points.front().execution_model == SpvExecutionModelVertex)
+                flags = VK_SHADER_STAGE_VERTEX_BIT;
+            if (var.second.storage_class == SpvStorageClassUniform) 
+                stages[var.second.binding.value()] |= flags;
+        }
+
+    std::vector<VkDescriptorSetLayoutBinding> bindings;
+    for (size_t i = 0; i < stages.size(); i++) {
+        if (stages[i] == 0)
+            continue;
+        VkDescriptorSetLayoutBinding binding = {};
+        binding.binding = i;
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        binding.descriptorCount = 1;
+        binding.stageFlags = stages[i];
+        bindings.push_back(binding);
+    }
+
 
     VkDescriptorSetLayoutCreateInfo set_create_info = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
     set_create_info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
-    set_create_info.bindingCount = 1;
-    set_create_info.pBindings = &set_binding;
+    set_create_info.bindingCount = static_cast<uint32_t>(bindings.size());
+    set_create_info.pBindings = bindings.data();
 
     VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
     VK_ASSERT(vkCreateDescriptorSetLayout(device, &set_create_info, nullptr, &set_layout));
+
+    std::vector<VkPushConstantRange> ranges = GetPushConstantRange(shaders);
 
     VkPipelineLayoutCreateInfo info = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
     info.setLayoutCount = 1;
@@ -728,6 +746,23 @@ void UploadBuffer(VkDevice device, VkCommandPool pool, VkQueue queue,
     CopyBuffer(device, pool, queue, staging, size, dst); 
 }
 
+// descriptors that used as data for vkCmdPushDescriptorSetWithTemplateKHR
+class PushDescriptorSets
+{
+public:
+
+    PushDescriptorSets(const Buffer& buffer) {
+        buffer_.buffer = buffer.buffer;
+        buffer_.offset = 0;
+        buffer_.range = buffer.size;
+    }
+
+    union {
+        VkDescriptorImageInfo image_;
+        VkDescriptorBufferInfo buffer_;
+    };
+};
+
 VkQueryPool CreateQueryPool(VkDevice device, VkQueryType type, uint32_t count, 
                             VkQueryPipelineStatisticFlags statistics) {
     VkQueryPoolCreateInfo info = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
@@ -759,6 +794,42 @@ std::vector<VkDrawIndexedIndirectCommand> CreateIndirectCommandBuffer(const Mesh
         commands.push_back(indirectCmd);
     }
     return std::move(commands);
+}
+
+VkDescriptorUpdateTemplate CreateDescriptorUpdateTemplate(VkDevice device, VkPipelineLayout layout, 
+                                                          ShaderModules shaders) {
+    std::vector<VkDescriptorType> bindings(32, VK_DESCRIPTOR_TYPE_MAX_ENUM);
+
+    for (auto& shader : shaders) 
+        for (auto& var : shader.reflections.variables)
+            if (var.second.storage_class == SpvStorageClassUniform)
+                bindings[var.second.binding.value()] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+
+    std::vector<VkDescriptorUpdateTemplateEntry> entries;
+    for (size_t i = 0; i < bindings.size(); i++) {
+        if (bindings[i] == VK_DESCRIPTOR_TYPE_MAX_ENUM) 
+            continue;
+        VkDescriptorUpdateTemplateEntry entry = {};
+        entry.dstBinding = static_cast<uint32_t>(i);
+        entry.descriptorCount = 1;
+        entry.descriptorType = bindings[i];
+        entry.offset = entries.size() * sizeof(PushDescriptorSets);
+        entry.stride = sizeof(PushDescriptorSets);
+        entries.push_back(entry);
+    }
+
+    VkDescriptorUpdateTemplateCreateInfo info = { VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO };
+    info.descriptorUpdateEntryCount = static_cast<uint32_t>(entries.size());
+    info.pDescriptorUpdateEntries = entries.data();
+    info.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR;
+    info.descriptorSetLayout = VK_NULL_HANDLE;
+    info.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    info.pipelineLayout = layout;
+    info.set = 0;
+
+    VkDescriptorUpdateTemplate descriptorUpdateTemplate = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateDescriptorUpdateTemplate(device, &info, nullptr, &descriptorUpdateTemplate));
+    return descriptorUpdateTemplate;
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -847,8 +918,11 @@ int main() {
 
     ShaderModule vertex_shader = CreateShaderModule(device, "shaders/05.rin/base.vert.spv");
     ShaderModule fragment_shader = CreateShaderModule(device, "shaders/05.rin/base.frag.spv");
-    VkPipelineLayout layout = CreatePipelineLayout(device, { vertex_shader, fragment_shader });
+    ShaderModules shaders = { vertex_shader, fragment_shader };
+    VkPipelineLayout layout = CreatePipelineLayout(device, shaders);
     VkPipeline pipeline = CreatePipeline(device, layout, renderpass, vertex_shader, fragment_shader);
+
+    VkDescriptorUpdateTemplate descriptorUpdateTemplate = CreateDescriptorUpdateTemplate(device, layout, shaders);
 
     VkCommandPoolCreateInfo info = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
     info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -983,18 +1057,8 @@ int main() {
         vkCmdSetViewport(command_buffer, 0, 1, &viewport);
         vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
-        VkDescriptorBufferInfo buffer_info = {};
-        buffer_info.buffer = vb.buffer;
-        buffer_info.offset = 0;
-        buffer_info.range = vb.size;
-
-        VkWriteDescriptorSet desc_set { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-        desc_set.dstBinding = 0;
-        desc_set.descriptorCount = 1;
-        desc_set.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        desc_set.pBufferInfo = &buffer_info;
-
-        vkCmdPushDescriptorSetKHR(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &desc_set);
+        PushDescriptorSets descriptors[] = { vb };
+        vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, descriptorUpdateTemplate, layout, 0, &descriptors);
 
     #if CLUSTER_CULL
         vkCmdBindIndexBuffer(command_buffer, mib.buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -1095,6 +1159,7 @@ int main() {
 
     vkDestroyPipeline(device, pipeline, nullptr);
     vkDestroyPipelineLayout(device, layout, nullptr);
+    vkDestroyDescriptorUpdateTemplate(device, descriptorUpdateTemplate, nullptr);
     vkDestroyShaderModule(device, vertex_shader.module, nullptr);
     vkDestroyShaderModule(device, fragment_shader.module, nullptr);
 
