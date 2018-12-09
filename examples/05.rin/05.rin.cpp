@@ -3,7 +3,6 @@
 #if WIN32
 #include <windows.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
-#undef CreateSemaphore
 #endif
 
 #include <volk/volk.h>
@@ -25,26 +24,12 @@
 #include "mesh.h"
 #include "macro.h"
 #include "shader_module.h"
+#include "program.h"
+#include "synchronizes.h"
+#include "resources.h"
 
 #define SUPPORT_MULTIFRAME_IN_FLIGHT 0
 #define CLUSTER_CULL 1
-
-// from boost
-template <class integral, class size_t>
-constexpr integral align_up(integral x, size_t a) noexcept {
-    return integral((x + (integral(a) - 1)) & ~integral(a - 1));
-}
-
-template <class integral, class size_t>
-constexpr bool bit_test(integral x, size_t bit) noexcept {
-    return x & (1 << bit);
-}
-
-template <class integral_1, class integral_2>
-bool flag_test(integral_1 x, integral_2 flag) noexcept {
-    return (x & flag) == flag;
-}
-
 
 VkInstance CreateInstance(
     const char* ApplicationName,
@@ -440,7 +425,7 @@ void UpdateViewportScissor(VkExtent2D extent, VkViewport* viewport, VkRect2D* sc
     scissor->extent = extent;
 }
 
-// TODO:
+// UNDONE; TODO;
 VkDescriptorPool CreateDescriptorPool(VkDevice device) {
     VkDescriptorPoolCreateInfo info { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     VkDescriptorPool pool = VK_NULL_HANDLE;
@@ -448,6 +433,7 @@ VkDescriptorPool CreateDescriptorPool(VkDevice device) {
     return pool;
 }
 
+// UNDONE; TODO;
 VkDescriptorSet CreateDescriptorSet(VkDevice device, VkDescriptorPool pool) {
     VkDescriptorSetAllocateInfo info = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
     info.descriptorPool = pool;
@@ -456,158 +442,6 @@ VkDescriptorSet CreateDescriptorSet(VkDevice device, VkDescriptorPool pool) {
     VkDescriptorSet sets = VK_NULL_HANDLE;
     VK_ASSERT(vkAllocateDescriptorSets(device, &info, &sets));
     return sets;
-}
-
-VkPipelineLayout CreatePipelineLayout(VkDevice device, ShaderModules shaders) {
-    std::vector<VkShaderStageFlags> stages(32);
-
-    for (auto& shader : shaders) 
-        for (auto& var : shader.reflections.variables) {
-            VkShaderStageFlags flags = 0;
-            if (shader.reflections.entry_points.front().execution_model == SpvExecutionModelVertex)
-                flags = VK_SHADER_STAGE_VERTEX_BIT;
-            if (var.second.storage_class == SpvStorageClassUniform) 
-                stages[var.second.binding.value()] |= flags;
-        }
-
-    std::vector<VkDescriptorSetLayoutBinding> bindings;
-    for (size_t i = 0; i < stages.size(); i++) {
-        if (stages[i] == 0)
-            continue;
-        VkDescriptorSetLayoutBinding binding = {};
-        binding.binding = i;
-        binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        binding.descriptorCount = 1;
-        binding.stageFlags = stages[i];
-        bindings.push_back(binding);
-    }
-
-
-    VkDescriptorSetLayoutCreateInfo set_create_info = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    set_create_info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
-    set_create_info.bindingCount = static_cast<uint32_t>(bindings.size());
-    set_create_info.pBindings = bindings.data();
-
-    VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateDescriptorSetLayout(device, &set_create_info, nullptr, &set_layout));
-
-    std::vector<VkPushConstantRange> ranges = GetPushConstantRange(shaders);
-
-    VkPipelineLayoutCreateInfo info = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-    info.setLayoutCount = 1;
-    info.pSetLayouts = &set_layout;
-    info.pushConstantRangeCount = static_cast<uint32_t>(ranges.size());
-    info.pPushConstantRanges = ranges.data();
-
-    VkPipelineLayout layout = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreatePipelineLayout(device, &info, nullptr, &layout));
-
-    vkDestroyDescriptorSetLayout(device, set_layout, nullptr);
-
-    return layout;
-}
-
-VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass pass,
-                          const ShaderModule& vs, const ShaderModule& fs) { 
-    VkPipelineShaderStageCreateInfo vertex_info = GetPipelineShaderStageCreateInfo(vs, "main");
-    VkPipelineShaderStageCreateInfo fragment_info = GetPipelineShaderStageCreateInfo(fs, "main");
-    VkPipelineShaderStageCreateInfo shader_stages[] = { vertex_info, fragment_info };
-
-    VkPipelineVertexInputStateCreateInfo vertex_input_info { 
-        VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO 
-    };
-
-    VkPipelineInputAssemblyStateCreateInfo input_info { 
-        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO 
-    };
-    input_info.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    VkPipelineViewportStateCreateInfo viewport_info { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
-    viewport_info.viewportCount = 1;
-    viewport_info.scissorCount = 1;
-
-    VkPipelineRasterizationStateCreateInfo raster_info = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
-    raster_info.lineWidth = 1.0;
-    raster_info.polygonMode = VK_POLYGON_MODE_FILL;
-    raster_info.cullMode = VK_CULL_MODE_BACK_BIT;
-    raster_info.frontFace = VK_FRONT_FACE_CLOCKWISE;
-
-    VkPipelineMultisampleStateCreateInfo multisample_info = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
-    multisample_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineColorBlendAttachmentState blendstate = {};
-    blendstate.blendEnable = VK_FALSE;
-    blendstate.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-
-    VkPipelineColorBlendStateCreateInfo blend_info = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
-    blend_info.attachmentCount = 1;
-    blend_info.pAttachments = &blendstate;
-
-    VkDynamicState dynamic_state[] { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-    VkPipelineDynamicStateCreateInfo dynamic_info = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
-    dynamic_info.dynamicStateCount = ARRAY_SIZE(dynamic_state);
-    dynamic_info.pDynamicStates = dynamic_state;
-
-    VkGraphicsPipelineCreateInfo info = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
-    info.stageCount = ARRAY_SIZE(shader_stages);
-    info.pStages = shader_stages;
-    info.pVertexInputState = &vertex_input_info;
-    info.pInputAssemblyState = &input_info;
-    info.pViewportState = &viewport_info;
-    info.pRasterizationState = &raster_info;
-    info.pMultisampleState = &multisample_info;
-    info.pColorBlendState = &blend_info;
-    info.pDynamicState = &dynamic_info;
-
-    info.layout = layout;
-    info.renderPass = pass;
-    info.subpass = 0;
-
-    VkPipelineCache pipeline_cache = VK_NULL_HANDLE;
-    VkPipeline pipeline = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateGraphicsPipelines(device, pipeline_cache, 1, &info, nullptr, &pipeline));
-
-    return pipeline;
-}
-
-VkSemaphore CreateSemaphore(VkDevice device, VkSemaphoreCreateFlags flags) {
-    VkSemaphoreCreateInfo info = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-    info.flags = flags;
-    VkSemaphore semaphore = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateSemaphore(device, &info, nullptr, &semaphore));
-    return semaphore;
-}
-
-std::vector<VkSemaphore> CreateSemaphore(VkDevice device, VkSemaphoreCreateFlags flags, size_t nums) {
-    std::vector<VkSemaphore> semaphores;
-    for (size_t i = 0; i < nums; i++) {
-        VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-        info.flags = flags;
-        VkSemaphore semaphore = VK_NULL_HANDLE;
-        VK_ASSERT(vkCreateSemaphore(device, &info, nullptr, &semaphore));
-        semaphores.push_back(semaphore);
-    }
-    return semaphores;
-}
-
-VkFence CreateFence(VkDevice device, VkFenceCreateFlags flags) {
-    VkFenceCreateInfo info { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-    info.flags = flags;
-    VkFence fence = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateFence(device, &info, nullptr, &fence));
-    return fence;
-}
-
-std::vector<VkFence> CreateFence(VkDevice device, VkFenceCreateFlags flags, size_t nums) {
-    std::vector<VkFence> fences;
-    for (size_t i = 0; i < nums; i++) {
-        VkFenceCreateInfo info { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-        info.flags = flags;
-        VkFence fence = VK_NULL_HANDLE;
-        VK_ASSERT(vkCreateFence(device, &info, nullptr, &fence));
-        fences.push_back(fence);
-    }
-    return fences;
 }
 
 VkCommandBuffer CreateCommandBuffer(VkDevice device, VkCommandPool pool) {
@@ -631,137 +465,6 @@ std::vector<VkCommandBuffer> CreateCommandBuffer(VkDevice device, VkCommandPool 
     VK_ASSERT(vkAllocateCommandBuffers(device, &info, buffer.data()));
     return buffer;
 }
-
-struct BufferCreateinfo {
-    VkBufferUsageFlags usage;
-    VkMemoryPropertyFlags flags;
-    VkDeviceSize size;
-    const void* data;
-};
-
-struct Buffer {
-    VkBuffer buffer;
-    VkDeviceMemory memory;
-    VkBufferUsageFlags usage;
-    VkMemoryPropertyFlags flags;
-    VkDeviceSize size;
-    void* data;
-};
-
-Buffer CreateBuffer(VkDevice device, const VkPhysicalDeviceMemoryProperties& properties, const BufferCreateinfo& info)
-{
-    ASSERT(info.size);
-
-    VkBufferCreateInfo create_info = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
-    create_info.size = info.size;
-    create_info.usage = info.usage;
-    create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    VkBuffer buffer = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateBuffer(device, &create_info, nullptr, &buffer));
-
-    VkMemoryRequirements requirement;
-    vkGetBufferMemoryRequirements(device, buffer, &requirement);
-
-    uint32_t type_index = 0;
-    uint32_t heap_index = 0;
-    for (uint32_t i = 0; i < properties.memoryTypeCount; i++) {
-        if (flag_test(properties.memoryTypes[i].propertyFlags, info.flags) &&
-            bit_test(requirement.memoryTypeBits, i)) {
-            type_index = i;
-            heap_index = properties.memoryTypes[i].heapIndex; 
-        }
-    }
-
-    VkMemoryAllocateInfo alloc = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
-    alloc.memoryTypeIndex = type_index;
-    alloc.allocationSize = requirement.size;
-
-    VkDeviceMemory memory = VK_NULL_HANDLE;
-    VK_ASSERT(vkAllocateMemory(device, &alloc, nullptr, &memory));
-
-    VkDeviceSize offset = 0;
-    VK_ASSERT(vkBindBufferMemory(device, buffer, memory, offset));
-
-    void* data = nullptr;
-    if (info.flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
-        VK_ASSERT(vkMapMemory(device, memory, 0, requirement.size, 0, &data));
-        if (info.data)
-            memcpy(data, info.data, static_cast<uint32_t>(info.size));
-    }
-
-    return Buffer { buffer, memory, info.flags, info.usage, requirement.size, data };
-}
-
-void DestroyBuffer(VkDevice device, Buffer* buffer)
-{
-    ASSERT(buffer);
-
-    vkFreeMemory(device, buffer->memory, nullptr);
-    buffer->memory = VK_NULL_HANDLE;
-    vkDestroyBuffer(device, buffer->buffer, nullptr);
-    buffer->buffer = VK_NULL_HANDLE;
-    buffer->data = nullptr;
-}
-
-void CopyBuffer(VkDevice device, VkCommandPool pool, VkQueue queue, 
-                const Buffer& src, VkDeviceSize size, const Buffer& dst)
-{
-    VkCommandBufferAllocateInfo alloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-    alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    alloc.commandPool = pool;
-    alloc.commandBufferCount = 1;
-
-    VkCommandBuffer command = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device, &alloc, &command);
-
-    VK_ASSERT(vkResetCommandBuffer(command, 0));
-    VkCommandBufferBeginInfo begin { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    VK_ASSERT(vkBeginCommandBuffer(command, &begin));
-    
-    VkBufferCopy resion = { 0, 0, size };
-    vkCmdCopyBuffer(command, src.buffer, dst.buffer, 1, &resion);
-    VK_ASSERT(vkEndCommandBuffer(command));
-
-    VkSubmitInfo submit = {};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &command;
-
-    VkFence fence = CreateFence(device, 0);
-    VK_ASSERT(vkQueueSubmit(queue, 1, &submit, fence));
-    VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
-    vkDestroyFence(device, fence, nullptr);
-}
-
-void UploadBuffer(VkDevice device, VkCommandPool pool, VkQueue queue,
-                  const Buffer& staging, const Buffer& dst, VkDeviceSize size, const void* data)
-{
-    ASSERT(size <= dst.size);
-    ASSERT(staging.data && data);
-
-    memcpy(staging.data, data, static_cast<size_t>(size));
-    
-    CopyBuffer(device, pool, queue, staging, size, dst); 
-}
-
-// descriptors that used as data for vkCmdPushDescriptorSetWithTemplateKHR
-class PushDescriptorSets
-{
-public:
-
-    PushDescriptorSets(const Buffer& buffer) {
-        buffer_.buffer = buffer.buffer;
-        buffer_.offset = 0;
-        buffer_.range = buffer.size;
-    }
-
-    union {
-        VkDescriptorImageInfo image_;
-        VkDescriptorBufferInfo buffer_;
-    };
-};
 
 VkQueryPool CreateQueryPool(VkDevice device, VkQueryType type, uint32_t count, 
                             VkQueryPipelineStatisticFlags statistics) {
@@ -794,42 +497,6 @@ std::vector<VkDrawIndexedIndirectCommand> CreateIndirectCommandBuffer(const Mesh
         commands.push_back(indirectCmd);
     }
     return std::move(commands);
-}
-
-VkDescriptorUpdateTemplate CreateDescriptorUpdateTemplate(VkDevice device, VkPipelineLayout layout, 
-                                                          ShaderModules shaders) {
-    std::vector<VkDescriptorType> bindings(32, VK_DESCRIPTOR_TYPE_MAX_ENUM);
-
-    for (auto& shader : shaders) 
-        for (auto& var : shader.reflections.variables)
-            if (var.second.storage_class == SpvStorageClassUniform)
-                bindings[var.second.binding.value()] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-
-    std::vector<VkDescriptorUpdateTemplateEntry> entries;
-    for (size_t i = 0; i < bindings.size(); i++) {
-        if (bindings[i] == VK_DESCRIPTOR_TYPE_MAX_ENUM) 
-            continue;
-        VkDescriptorUpdateTemplateEntry entry = {};
-        entry.dstBinding = static_cast<uint32_t>(i);
-        entry.descriptorCount = 1;
-        entry.descriptorType = bindings[i];
-        entry.offset = entries.size() * sizeof(PushDescriptorSets);
-        entry.stride = sizeof(PushDescriptorSets);
-        entries.push_back(entry);
-    }
-
-    VkDescriptorUpdateTemplateCreateInfo info = { VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO };
-    info.descriptorUpdateEntryCount = static_cast<uint32_t>(entries.size());
-    info.pDescriptorUpdateEntries = entries.data();
-    info.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR;
-    info.descriptorSetLayout = VK_NULL_HANDLE;
-    info.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    info.pipelineLayout = layout;
-    info.set = 0;
-
-    VkDescriptorUpdateTemplate descriptorUpdateTemplate = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateDescriptorUpdateTemplate(device, &info, nullptr, &descriptorUpdateTemplate));
-    return descriptorUpdateTemplate;
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -919,9 +586,9 @@ int main() {
     ShaderModule vertex_shader = CreateShaderModule(device, "shaders/05.rin/base.vert.spv");
     ShaderModule fragment_shader = CreateShaderModule(device, "shaders/05.rin/base.frag.spv");
     ShaderModules shaders = { vertex_shader, fragment_shader };
-    VkPipelineLayout layout = CreatePipelineLayout(device, shaders);
-    VkPipeline pipeline = CreatePipeline(device, layout, renderpass, vertex_shader, fragment_shader);
 
+    VkPipelineLayout layout = CreatePipelineLayout(device, shaders);
+    VkPipeline pipeline = CreatePipeline(device, layout, renderpass, shaders);
     VkDescriptorUpdateTemplate descriptorUpdateTemplate = CreateDescriptorUpdateTemplate(device, layout, shaders);
 
     VkCommandPoolCreateInfo info = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
