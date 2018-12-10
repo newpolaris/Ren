@@ -28,7 +28,10 @@
 #include "resources.h"
 
 #define SUPPORT_MULTIFRAME_IN_FLIGHT 0
-#define CLUSTER_CULL 1
+
+namespace {
+    bool cluster_culling = true;
+};
 
 VkInstance CreateInstance(
     const char* ApplicationName,
@@ -498,6 +501,17 @@ std::vector<VkDrawIndexedIndirectCommand> CreateIndirectCommandBuffer(const Mesh
     return std::move(commands);
 }
 
+/*
+ *  @param[in] key The [keyboard key](@ref keys) that was pressed or released.
+ *  @param[in] scancode The system-specific scancode of the key.
+ *  @param[in] action `GLFW_PRESS`, `GLFW_RELEASE` or `GLFW_REPEAT`.
+ *  @param[in] mods Bit field describing which [modifier keys](@ref mods) were GLFWkeyfun
+ */
+static void KeyboardCallback(GLFWwindow* windows, int key, int scancode, int action, int mods) {
+    if (key == GLFW_KEY_C && action == GLFW_PRESS)
+        cluster_culling = !cluster_culling;
+}
+
 static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
                                                     VkDebugUtilsMessageTypeFlagsEXT messageType,
                                                     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
@@ -554,7 +568,7 @@ int main() {
     VkDebugUtilsMessengerEXT messenger = CreateDebugCallback(instance, DebugCallback);
 
     GLFWwindow* windows = glfwCreateWindow(width, height, application_name, nullptr, nullptr);
-
+    glfwSetKeyCallback(windows, KeyboardCallback);
     VkSurfaceKHR surface = CreateSurface(instance, windows);
 
     VkPhysicalDevice physical_device = CreatePhysicalDevice(instance);
@@ -725,19 +739,17 @@ int main() {
         PushDescriptorSets descriptors[] = { vb };
         vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, program.update, program.layout, 0, &descriptors);
 
-    #if CLUSTER_CULL
-        vkCmdBindIndexBuffer(command_buffer, mib.buffer, 0, VK_INDEX_TYPE_UINT32);
-    #else
-        vkCmdBindIndexBuffer(command_buffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
-    #endif
+        if (cluster_culling)
+            vkCmdBindIndexBuffer(command_buffer, mib.buffer, 0, VK_INDEX_TYPE_UINT32);
+        else
+            vkCmdBindIndexBuffer(command_buffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 
         for (auto draw : draws) {
             vkCmdPushConstants(command_buffer, program.layout, program.push_constant_stages, 0, sizeof(draw), &draw);
-        #if CLUSTER_CULL
-            vkCmdDrawIndexedIndirect(command_buffer, idcb.buffer, 0, indirect_draw_count, sizeof(VkDrawIndexedIndirectCommand));
-        #else
-            vkCmdDrawIndexed(command_buffer, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
-        #endif
+            if (cluster_culling)
+                vkCmdDrawIndexedIndirect(command_buffer, idcb.buffer, 0, indirect_draw_count, sizeof(VkDrawIndexedIndirectCommand));
+            else
+                vkCmdDrawIndexed(command_buffer, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
         }
         vkCmdEndRenderPass(command_buffer);
 
