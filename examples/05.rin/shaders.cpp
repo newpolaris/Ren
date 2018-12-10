@@ -330,6 +330,11 @@ VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass
     VkPipelineMultisampleStateCreateInfo multisample_info = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
     multisample_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
+    VkPipelineDepthStencilStateCreateInfo depth_info = { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
+    depth_info.depthTestEnable = VK_FALSE;
+    depth_info.depthWriteEnable = VK_TRUE;
+    depth_info.depthCompareOp = VK_COMPARE_OP_GREATER;
+
     VkPipelineColorBlendAttachmentState blendstate = {};
     blendstate.blendEnable = VK_FALSE;
     blendstate.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -351,6 +356,7 @@ VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass
     info.pViewportState = &viewport_info;
     info.pRasterizationState = &raster_info;
     info.pMultisampleState = &multisample_info;
+    info.pDepthStencilState = &depth_info;
     info.pColorBlendState = &blend_info;
     info.pDynamicState = &dynamic_info;
 

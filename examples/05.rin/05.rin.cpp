@@ -215,29 +215,37 @@ VkDevice CreateDevice(VkPhysicalDevice physical_device, uint32_t queue_family_in
     return device;
 }
 
-VkRenderPass CreateRenderPass(VkDevice device, VkFormat format) {
-    VkAttachmentDescription description = {};
-    description.format = format;
-    description.samples = VK_SAMPLE_COUNT_1_BIT;
-    description.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    description.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    description.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    description.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    description.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED ;
-    description.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+VkRenderPass CreateRenderPass(VkDevice device, VkFormat color_format, VkFormat depth_format) {
+    VkAttachmentDescription desc[2] = {};
+    desc[0].format = color_format;
+    desc[0].samples = VK_SAMPLE_COUNT_1_BIT;
+    desc[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    desc[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    desc[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    desc[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    desc[0].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    desc[0].finalLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    desc[1].format = depth_format;
+    desc[1].samples = VK_SAMPLE_COUNT_1_BIT;
+    desc[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    desc[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    desc[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    desc[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    desc[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    desc[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-    VkAttachmentReference color_attachment_ref = {};
-    color_attachment_ref.attachment = 0;
-    color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    VkAttachmentReference color = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+    VkAttachmentReference depth = { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
 
     VkSubpassDescription subpass = {};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &color_attachment_ref;
+    subpass.pColorAttachments = &color;
+    subpass.pDepthStencilAttachment = &depth;
 
     VkRenderPassCreateInfo info = { VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
-    info.attachmentCount = 1;
-    info.pAttachments = &description;
+    info.attachmentCount = ARRAY_SIZE(desc);
+    info.pAttachments = desc;
     info.subpassCount = 1;
     info.pSubpasses = &subpass;
 
@@ -301,7 +309,7 @@ VkSwapchainKHR CreateSwapchain(VkDevice device, VkSurfaceKHR surface, const Surf
     ASSERT(capabilities.supportedTransforms & pretransform);
     ASSERT(capabilities.supportedCompositeAlpha & composite_alpha);
 
-    uint32_t imagecount = std::min(capabilities.minImageCount + 1, capabilities.maxImageCount);
+    const uint32_t imagecount = std::min(capabilities.minImageCount + 1, capabilities.maxImageCount);
 
     // The Vulkan spec states: imageExtent must be between minImageExtent and maxImageExtent,
     VkExtent2D currentExtent = capabilities.currentExtent;
@@ -315,7 +323,6 @@ VkSwapchainKHR CreateSwapchain(VkDevice device, VkSurfaceKHR surface, const Surf
     info.imageArrayLayers = std::min(1u, capabilities.maxImageArrayLayers);
     info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    info.queueFamilyIndexCount = properties.queue_family_index;
     info.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
     info.compositeAlpha = composite_alpha;
     info.presentMode = properties.present_mode;
@@ -327,11 +334,11 @@ VkSwapchainKHR CreateSwapchain(VkDevice device, VkSurfaceKHR surface, const Surf
     return swapchain;
 }
 
-VkFramebuffer CreateFramebuffer(VkDevice device, VkRenderPass pass, VkImageView view, VkExtent2D extent) {
+VkFramebuffer CreateFramebuffer(VkDevice device, VkRenderPass pass, ImageViewList views, VkExtent2D extent) {
     VkFramebufferCreateInfo info = { VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
     info.renderPass = pass;
-    info.attachmentCount = 1;
-    info.pAttachments = &view;
+    info.attachmentCount = static_cast<uint32_t>(views.size());
+    info.pAttachments = views.data();
     info.width = extent.width;
     info.height = extent.height;
     info.layers = 1;
@@ -341,59 +348,22 @@ VkFramebuffer CreateFramebuffer(VkDevice device, VkRenderPass pass, VkImageView 
     return framebuffer;
 }
 
-VkImageView CreateImageView(VkDevice device, VkImage image, VkFormat format) {
-    VkComponentMapping components {
-        VK_COMPONENT_SWIZZLE_IDENTITY,
-        VK_COMPONENT_SWIZZLE_IDENTITY,
-        VK_COMPONENT_SWIZZLE_IDENTITY,
-        VK_COMPONENT_SWIZZLE_IDENTITY
-    };
-
-    VkImageSubresourceRange range {
-        VK_IMAGE_ASPECT_COLOR_BIT,
-        0, 1, 0, 1
-    };
-
-    VkImageViewCreateInfo info = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
-    info.image = image;
-    info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    info.format = format;
-    info.components = components;
-    info.subresourceRange = range;
-
-    VkImageView view = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateImageView(device, &info, nullptr, &view));
-    return view;
-}
-
 struct Swapchain {
     VkExtent2D extent;
     VkSwapchainKHR swapchain;
-    std::vector<VkImageView> imageviews;
-    std::vector<VkFramebuffer> framebuffers;
+    std::vector<VkImage> images;
 };
 
-void DestroySwapchain(VkDevice device, Swapchain* result) {
-    ASSERT(result);
-
-    for (auto view : result->imageviews)
-        vkDestroyImageView(device, view, nullptr);
-    result->imageviews.clear();
-
-    for (auto framebuffer : result->framebuffers)
-        vkDestroyFramebuffer(device, framebuffer, nullptr);
-    result->framebuffers.clear();
-
-    vkDestroySwapchainKHR(device, result->swapchain, nullptr);
-    result->swapchain = VK_NULL_HANDLE;
-}
+void DestroySwapchain(VkDevice device, Swapchain* result);
 
 void CreateSwapchain(VkDevice device, const VkSurfaceCapabilitiesKHR& capabilities, VkSurfaceKHR surface,
                      const SurfaceProperties& properties, VkRenderPass renderpass, Swapchain* result) {
     ASSERT(result);
 
+    // recreate new swapchain with old swapchain
     VkSwapchainKHR swapchain = CreateSwapchain(device, surface, properties, capabilities, result->swapchain);
 
+    // destroy old swapchain
     DestroySwapchain(device, result);
 
     VkExtent2D extent = capabilities.currentExtent;
@@ -403,16 +373,16 @@ void CreateSwapchain(VkDevice device, const VkSurfaceCapabilitiesKHR& capabiliti
     std::vector<VkImage> images(count);
     VK_ASSERT(vkGetSwapchainImagesKHR(device, swapchain, &count, images.data()));
 
-    std::vector<VkImageView> imageviews;
-    for (auto image : images) 
-        imageviews.push_back(CreateImageView(device, image, properties.format.format));
-
-    std::vector<VkFramebuffer> framebuffers;
-    for (auto view : imageviews)
-        framebuffers.push_back(CreateFramebuffer(device, renderpass, view, extent));
-
-    *result = Swapchain { extent, swapchain, imageviews, framebuffers };
+    *result = Swapchain { extent, swapchain, images };
 }
+
+void DestroySwapchain(VkDevice device, Swapchain* result) {
+    ASSERT(result);
+
+    vkDestroySwapchainKHR(device, result->swapchain, nullptr);
+    result->swapchain = VK_NULL_HANDLE;
+}
+
 
 void UpdateViewportScissor(VkExtent2D extent, VkViewport* viewport, VkRect2D* scissor) {
     // viewport trick to make positive y upward 
@@ -580,11 +550,13 @@ int main() {
 
     VkSurfaceCapabilitiesKHR capabilities = {};
     VK_ASSERT(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &capabilities));
-    const VkRenderPass renderpass = CreateRenderPass(device, surface_properties.format.format);
+
+    VkFormat color_format = surface_properties.format.format;
+    VkFormat depth_format = VK_FORMAT_D32_SFLOAT;
+
+    const VkRenderPass renderpass = CreateRenderPass(device, surface_properties.format.format, VK_FORMAT_D32_SFLOAT);
 
     Swapchain swapchain = {};
-    CreateSwapchain(device, capabilities, surface, surface_properties, renderpass, &swapchain);
-    
     VkViewport viewport = {};
     VkRect2D scissor = {};
 
@@ -611,7 +583,7 @@ int main() {
     VK_ASSERT(vkCreateCommandPool(device, &info, nullptr, &command_pool));
     VK_ASSERT(vkResetCommandPool(device, command_pool, 0));
 
-    size_t chains = swapchain.imageviews.size();
+    const size_t chains = std::min(capabilities.minImageCount + 1, capabilities.maxImageCount);
 
     std::vector<VkCommandBuffer> command_buffers = CreateCommandBuffer(device, command_pool, chains);
 
@@ -687,6 +659,10 @@ int main() {
 
     size_t current_frame = 0;
 
+    Image color = {};
+    Image depth = {};
+    VkFramebuffer framebuffer = VK_NULL_HANDLE;
+
     while(!glfwWindowShouldClose(windows)) {
         glfwPollEvents();
 
@@ -700,8 +676,10 @@ int main() {
         auto signal_semaphore = signal_semaphores[current_frame];
 
         uint32_t image_index = 0;
-        VkResult result = vkAcquireNextImageKHR(device, swapchain.swapchain, ~0ull, semaphore, VK_NULL_HANDLE, &image_index);
-
+        VkResult result = VK_ERROR_OUT_OF_DATE_KHR;
+        // to skip signals smaphore 
+        if (swapchain.swapchain)
+            result = vkAcquireNextImageKHR(device, swapchain.swapchain, ~0ull, semaphore, VK_NULL_HANDLE, &image_index);
         if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
             VK_ASSERT(vkDeviceWaitIdle(device));
             VK_ASSERT(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &capabilities));
@@ -709,6 +687,26 @@ int main() {
                 continue;
             CreateSwapchain(device, capabilities, surface, surface_properties, renderpass, &swapchain);
             UpdateViewportScissor(swapchain.extent, &viewport, &scissor);
+
+            vkDestroyFramebuffer(device, framebuffer, nullptr);
+            DestroyImage(device, &color);
+            DestroyImage(device, &depth);
+
+            const VkExtent2D extent = { capabilities.currentExtent.width, capabilities.currentExtent.height };
+            color = CreateImage(device, physical_properties.memory, {
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                color_format,
+                extent
+            });
+
+            depth = CreateImage(device, physical_properties.memory, {
+                VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                depth_format,
+                extent
+            });
+            framebuffer = CreateFramebuffer(device, renderpass, {color.view, depth.view}, extent);
             continue;
         } 
         ASSERT(result == VK_SUCCESS);
@@ -721,12 +719,24 @@ int main() {
 
         vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, current_frame*2);
 
+        VkImageMemoryBarrier render_begin[] = {
+            CreateImageBarrier(color.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT),
+            CreateImageBarrier(depth.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT),
+        };
+        vkCmdPipelineBarrier(command_buffer,
+            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr,
+            ARRAY_SIZE(render_begin), render_begin);
+
         VkClearColorValue clear_color = { std::sin(static_cast<float>(glfwGetTime()))*0.5f + 0.5f, 0.5f, 0.5f, 1.0f };
-        const VkClearValue clear_values[] = { clear_color, };
+        VkClearDepthStencilValue clear_depth = { 1.0, 0 };
+        VkClearValue clear_values[2];
+        clear_values[0].color = clear_color;
+        clear_values[1].depthStencil = clear_depth;
 
         VkRenderPassBeginInfo pass = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
         pass.renderPass = renderpass;
-        pass.framebuffer = swapchain.framebuffers[image_index];
+        pass.framebuffer = framebuffer;
         pass.renderArea = scissor;
         pass.clearValueCount = ARRAY_SIZE(clear_values);
         pass.pClearValues = clear_values;
@@ -753,11 +763,38 @@ int main() {
         }
         vkCmdEndRenderPass(command_buffer);
 
+        VkImageMemoryBarrier copyBarriers[] = {
+            CreateImageBarrier(swapchain.images[image_index], 0, VK_ACCESS_TRANSFER_WRITE_BIT, 
+                               VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT),
+        };
+
+        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, ARRAYSIZE(copyBarriers), copyBarriers);
+
+        // TODO: implement scale paste
+        VkImageCopy copy_region = {};
+        copy_region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copy_region.srcSubresource.layerCount = 1;
+        copy_region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copy_region.dstSubresource.layerCount = 1;
+        copy_region.extent = { swapchain.extent.width, swapchain.extent.height };
+
+        vkCmdCopyImage(command_buffer, color.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapchain.images[image_index],
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
+
+        VkImageMemoryBarrier present = CreateImageBarrier(swapchain.images[image_index], 
+                                                          VK_ACCESS_TRANSFER_WRITE_BIT, 0, 
+                                                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                                                          VK_IMAGE_ASPECT_COLOR_BIT);
+
+        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                             VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, 1, &present);
+
         vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, current_frame*2+1);
 
         VK_ASSERT(vkEndCommandBuffer(command_buffer));
 
-        VkPipelineStageFlags stage_flags[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+        VkPipelineStageFlags stage_flags[] = { VK_PIPELINE_STAGE_TRANSFER_BIT };
         VkSubmitInfo submit = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
         submit.waitSemaphoreCount = 1;
         submit.pWaitSemaphores = &semaphore;
@@ -832,6 +869,11 @@ int main() {
     DestroyBuffer(device, &mib);
     DestroyBuffer(device, &idcb);
 
+    vkDestroyFramebuffer(device, framebuffer, nullptr);
+
+    DestroyImage(device, &color);
+    DestroyImage(device, &depth);
+    
     vkDestroyQueryPool(device, timestamp_pool, nullptr);
 
     vkDestroyPipeline(device, pipeline, nullptr);
