@@ -18,18 +18,21 @@ layout(location = 0) out vec3 color;
 
 struct MeshDraw
 {
-	vec2 offset;
-	vec2 scale;
+    mat4x4 project;
+	vec3 position;
+    float scale;
+    vec4 orientation;
 };
 
 layout(push_constant) uniform param_block {
     MeshDraw mesh_draw;
 };
 
-void main() {
-    vec3 scale = vec3(mesh_draw.scale, 0.5);
-    vec3 offset = vec3(mesh_draw.offset, 0.0);
+vec3 rotate_position(vec4 quat, vec3 v) {
+    return v + 2.0 * cross(quat.xyz, cross(quat.xyz, v) + quat.w * v);
+ }
 
+void main() {
     // To handle "Capability Int8 is not allowed by Vulkan 1.1 specification (or requires extension) OpCapability Int8"
     // Not allowed assignment / direct cast to float (allowed via int) (maybe? with/without both raise validation error)
     vec3 position = vec3(vertices[gl_VertexIndex].position); 
@@ -37,5 +40,5 @@ void main() {
     vec2 texcoords = vec2(vertices[gl_VertexIndex].texcoords);
 
     color = vec3(normal) / 127.0 - 1.0;
-    gl_Position = vec4((position * scale + offset) * vec3(2.0, 2.0, 0.0) + vec3(-1.0, -1.0, 0.5), 1.0);
+    gl_Position = mesh_draw.project * vec4(rotate_position(mesh_draw.orientation, position) * mesh_draw.scale + mesh_draw.position, 1.0);
 }

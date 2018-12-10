@@ -3,10 +3,17 @@
 #include <stdint.h>
 #include <vector>
 
+#include <glm/vec3.hpp>
+#include <glm/vec4.hpp>
+#include <glm/mat4x4.hpp>
+#include <glm/ext/quaternion_float.hpp>
+
 struct MeshDraw
 {
-	float offset[2];
-	float scale[2];
+    glm::mat4x4 project;
+    glm::vec3 position;
+	float scale;
+    glm::quat orientation;
 };
 
 struct alignas(16) Vertex

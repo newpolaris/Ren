@@ -331,7 +331,7 @@ VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass
     multisample_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
     VkPipelineDepthStencilStateCreateInfo depth_info = { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
-    depth_info.depthTestEnable = VK_FALSE;
+    depth_info.depthTestEnable = VK_TRUE;
     depth_info.depthWriteEnable = VK_TRUE;
     depth_info.depthCompareOp = VK_COMPARE_OP_GREATER;
 

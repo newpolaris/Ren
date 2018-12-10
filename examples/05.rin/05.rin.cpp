@@ -27,6 +27,9 @@
 #include "synchronizes.h"
 #include "resources.h"
 
+#include <random>
+#include <glm/ext/quaternion_transform.hpp>
+
 #define SUPPORT_MULTIFRAME_IN_FLIGHT 0
 
 namespace {
@@ -517,6 +520,14 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityF
     return VK_FALSE;
 }
 
+glm::mat4x4 PerspectiveProjection(float fovY, float aspect, float nearz) {
+    float f = 1.0f / glm::tan(fovY/ 2.0f);
+    return glm::mat4(f / aspect, 0.0f,  0.0f,  0.0f,
+                           0.0f,    f,  0.0f,  0.0f,
+                           0.0f, 0.0f,  0.0f,  1.0f,
+                           0.0f, 0.0f, nearz,  0.0f);
+}
+
 int main() {
     const char* application_name = "Hello Kitty";
     const char* engine_name = "Rin";
@@ -645,14 +656,19 @@ int main() {
 
     VkQueryPool timestamp_pool = CreateQueryPool(device, VK_QUERY_TYPE_TIMESTAMP, 1024, 0);
 
-    uint32_t row_count = 10;
-    uint32_t draw_count = row_count*row_count;
+    std::default_random_engine eng {10};
+    std::uniform_real_distribution<float> urd(0, 1);
+    uint32_t draw_count = 2000;
     std::vector<MeshDraw> draws(draw_count);
     for (uint32_t i = 0; i < draw_count; i++) {
-        draws[i].offset[0] = (float(i % row_count) + 0.5f) / row_count;
-        draws[i].offset[1] = (float(i / row_count) + 0.5f) / row_count;
-        draws[i].scale[0] = 1.f / row_count;
-        draws[i].scale[1] = 1.f / row_count;
+        glm::vec3 axis = glm::vec3( urd(eng)*2 - 1, urd(eng)*2 - 1, urd(eng)*2 - 1);
+        float angle = glm::radians(urd(eng) * 90.f);
+
+        draws[i].position[0] = urd(eng) * 20.f - 10.f;
+        draws[i].position[1] = urd(eng) * 20.f - 10.f;
+        draws[i].position[2] = urd(eng) * 20.f - 10.f;
+        draws[i].scale = urd(eng) + 0.5f;
+        draws[i].orientation = glm::rotate(glm::quat(1, 0, 0, 0), angle, axis); 
     }
 
     double cpu_average = 0.0, gpu_average = 0.0, wait_average = 0.0;
@@ -729,7 +745,7 @@ int main() {
             ARRAY_SIZE(render_begin), render_begin);
 
         VkClearColorValue clear_color = { std::sin(static_cast<float>(glfwGetTime()))*0.5f + 0.5f, 0.5f, 0.5f, 1.0f };
-        VkClearDepthStencilValue clear_depth = { 1.0, 0 };
+        VkClearDepthStencilValue clear_depth = { 0.0f, 0 };
         VkClearValue clear_values[2];
         clear_values[0].color = clear_color;
         clear_values[1].depthStencil = clear_depth;
@@ -753,6 +769,11 @@ int main() {
             vkCmdBindIndexBuffer(command_buffer, mib.buffer, 0, VK_INDEX_TYPE_UINT32);
         else
             vkCmdBindIndexBuffer(command_buffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+        float aspect = static_cast<float>(swapchain.extent.width) / swapchain.extent.height;
+        glm::mat4x4 project = PerspectiveProjection(glm::radians(70.f), aspect, 0.01f);
+        for (auto& draw : draws)
+            draw.project = project;
 
         for (auto draw : draws) {
             vkCmdPushConstants(command_buffer, program.layout, program.push_constant_stages, 0, sizeof(draw), &draw);
