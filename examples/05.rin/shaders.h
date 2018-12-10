@@ -1,7 +1,7 @@
 #pragma once
 
 #include <volk.h>
-#include <shader_module.h>
+#include "spirv-reflect.h"
 
 #include "types.h"
 
@@ -17,12 +17,22 @@ public:
     };
 };
 
+struct ShaderModule
+{   
+    VkShaderModule module;
+    spirv::SpirvReflections reflections;
+};
+
+ShaderModule CreateShaderModule(VkDevice device, const char* filename);
+
 struct Program
 {
     VkPipelineLayout layout;
-    VkPipeline pipeline;
+    VkDescriptorUpdateTemplate update;
+    VkShaderStageFlags push_constant_stages;
 };
 
-VkPipelineLayout CreatePipelineLayout(VkDevice device, ShaderModules shaders);
+Program CreateProgram(VkDevice device, ShaderModules shaders);
+void DestroyProgram(VkDevice device, Program* program);
+
 VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass pass, ShaderModules shaders);
-VkDescriptorUpdateTemplate CreateDescriptorUpdateTemplate(VkDevice device, VkPipelineLayout layout, ShaderModules shaders);

@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <vector>
 
-struct alignas(16) MeshDraw
+struct MeshDraw
 {
 	float offset[2];
 	float scale[2];

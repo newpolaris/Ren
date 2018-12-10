@@ -1,9 +1,14 @@
-#include "program.h"
+#include "shaders.h"
+#include "filesystem.h"
+#include "macro.h"
 
 #include <algorithm>
 #include "spirv-reflect.h"
 #include "macro.h"
 #include "resources.h"
+#include <string_view>
+
+constexpr auto main = "main";
 
 struct InputInterfaceAttribute
 {
@@ -13,17 +18,7 @@ struct InputInterfaceAttribute
     std::string name;
 };
 
-using VariableRef = std::reference_wrapper<const spirv::Variable>;
-using VariableRefList = std::vector<VariableRef>;
 using InputInterfaceAttributeList = std::vector<InputInterfaceAttribute>;
-
-InputInterfaceAttributeList GetInputInterfaceVariables(const ShaderModule& shader, const std::string& name);
-VariableRefList GetInterfaceVariableReferences(const ShaderModule& shader, const std::string& name);
-std::optional<InputInterfaceAttribute> FindVariable(const InputInterfaceAttributeList& list, const std::string& name);
-
-VkPipelineShaderStageCreateInfo GetPipelineShaderStageCreateInfo(const ShaderModule& shader, const std::string& name);
-std::vector<VkPushConstantRange> GetPushConstantRange(const ShaderModules shaders);
-
 
 VkShaderStageFlagBits GetShaderStageBit(SpvExecutionModel model)
 {
@@ -55,6 +50,7 @@ uint32_t GetPrimitiveStride(const spirv::SpirvReflections& reflections, const ui
 uint32_t GetStride(const spirv::SpirvReflections& reflections, const uint32_t& type_id) {
     auto it = reflections.struct_types.find(type_id);
     if (it != reflections.struct_types.end()) {
+        // last one's offset + length
         const auto& last = it->second.members.back();
         return last.offset + GetStride(reflections, last.type_id);
     } else {
@@ -111,13 +107,6 @@ VkFormat GetPrimitiveFormat(const spirv::PrimitiveType& type) {
     return VK_FORMAT_UNDEFINED;
 }
 
-std::optional<InputInterfaceAttribute> FindVariable(const InputInterfaceAttributeList& list, 
-                                                    const std::string& name) {
-    std::optional<InputInterfaceAttribute> optional;
-
-    return optional;
-}
-
 // TODO: can't handle - f16vec2, float16_t case
 //
 // In input attribute declared as VK_FORMAT_R16G16B16A16, in vertex (vec4)
@@ -149,7 +138,7 @@ InputInterfaceAttributeList GetInputInterfaceVariables(const ShaderModule& shade
     return std::move(list);
 }
 
-const spirv::EntryPoint& GetEntryPoint(const ShaderModule& shader, const std::string& name) {
+const spirv::EntryPoint& GetEntryPoint(const ShaderModule& shader, const std::string_view& name) {
     const auto& entries = shader.reflections.entry_points;
     auto it = std::find_if(entries.begin(), entries.end(), [&name](const auto& pts) { return name == pts.name; });
     ASSERT(it != entries.end());
@@ -157,36 +146,49 @@ const spirv::EntryPoint& GetEntryPoint(const ShaderModule& shader, const std::st
     return EntryPoint;
 }
 
-VariableRefList GetInterfaceVariableReferences(const ShaderModule& shader, const std::string& name) {
-    auto& entry_point = GetEntryPoint(shader, name);
-    std::vector<VariableRef> references;
-    references.reserve(entry_point.interfaces_ids.size());
-    for (auto id : entry_point.interfaces_ids)
-        references.push_back(std::ref(shader.reflections.variables.at(id)));
-    return std::move(references);
-}
-
-VkPipelineShaderStageCreateInfo GetPipelineShaderStageCreateInfo(const ShaderModule& shader, const std::string& name) {
+VkPipelineShaderStageCreateInfo GetPipelineShaderStageCreateInfo(const ShaderModule& shader, 
+                                                                 const std::string_view& name) {
     auto& entriy_point = GetEntryPoint(shader, name);
     
     VkPipelineShaderStageCreateInfo info = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
     info.stage = GetShaderStageBit(entriy_point.execution_model);
     info.module = shader.module;
-    info.pName = entriy_point.name.c_str();
+    info.pName = name.data();
 
     return std::move(info);
 }
 
-std::vector<VkPushConstantRange> GetPushConstantRange(const ShaderModules shaders) {
-    std::vector<VkPushConstantRange> ranges;
-    for (auto& shader : shaders) {
+VkPushConstantRange GetPushConstantRangeUnion(ShaderModules shaders) {
+    VkPushConstantRange range = {};
+    for (const auto& shader : shaders) {
         auto& reflection = shader.reflections;
-        auto& entry_point = GetEntryPoint(shader, "main");
+        auto& entry_point = GetEntryPoint(shader, main);
         for (auto& v : reflection.variables) {
             auto& var = v.second;
             if (var.storage_class != SpvStorageClassPushConstant)
                 continue;
             auto& st = reflection.struct_types.at(var.type_id);
+            // to calc range, use first one's offset
+            auto size = GetStride(reflection, var.type_id);
+
+            range.stageFlags |= GetShaderStageBit(entry_point.execution_model);
+            range.size = std::max(range.size, size);
+        }
+    }
+    return range;
+}
+
+std::vector<VkPushConstantRange> GetPushConstantRange(ShaderModules shaders) {
+    std::vector<VkPushConstantRange> ranges;
+    for (auto& shader : shaders) {
+        auto& reflection = shader.reflections;
+        auto& entry_point = GetEntryPoint(shader, main);
+        for (auto& v : reflection.variables) {
+            auto& var = v.second;
+            if (var.storage_class != SpvStorageClassPushConstant)
+                continue;
+            auto& st = reflection.struct_types.at(var.type_id);
+            // to calc range, use first one's offset
             auto offset = st.members.front().offset;
             auto size = GetStride(reflection, var.type_id);
 
@@ -214,33 +216,66 @@ std::vector<VkPushConstantRange> GetPushConstantRange(const ShaderModules shader
     return std::move(ranges);
 }
 
-PushDescriptorSets::PushDescriptorSets(const Buffer & buffer) {
+struct PushDescriptorBinding {
+    VkShaderStageFlags flags;
+    VkDescriptorType type;
+};
+
+std::vector<PushDescriptorBinding> GetPushDesciptorBindingStages(ShaderModules shaders) {
+    std::vector<PushDescriptorBinding> stages(32);
+
+    for (const auto& shader : shaders) {
+        auto& entry_point = GetEntryPoint(shader, main);
+        auto flag = GetShaderStageBit(entry_point.execution_model);
+        for (auto& var : shader.reflections.variables) {
+            if (var.second.storage_class != SpvStorageClassUniform)
+                continue;
+            auto& binding = stages[var.second.binding.value()];
+            binding.flags |= flag;
+            if (var.second.storage_class == SpvStorageClassUniform) 
+                binding.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        }
+    }
+    return stages;
+}
+
+
+PushDescriptorSets::PushDescriptorSets(const Buffer& buffer) {
     buffer_.buffer = buffer.buffer;
     buffer_.offset = 0;
     buffer_.range = buffer.size;
 }
 
-VkPipelineLayout CreatePipelineLayout(VkDevice device, ShaderModules shaders) {
-    std::vector<VkShaderStageFlags> stages(32);
+ShaderModule CreateShaderModule(VkDevice device, const char* filepath) {
+    auto code = FileRead(filepath);
+    VkShaderModuleCreateInfo info = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+    info.codeSize = code.size();
+    info.pCode = reinterpret_cast<uint32_t*>(code.data());
 
-    for (auto& shader : shaders) 
-        for (auto& var : shader.reflections.variables) {
-            VkShaderStageFlags flags = 0;
-            if (shader.reflections.entry_points.front().execution_model == SpvExecutionModelVertex)
-                flags = VK_SHADER_STAGE_VERTEX_BIT;
-            if (var.second.storage_class == SpvStorageClassUniform) 
-                stages[var.second.binding.value()] |= flags;
-        }
+    VkShaderModule module = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateShaderModule(device, &info, nullptr, &module));
 
+    spirv::SpirvReflections reflections = spirv::ReflectShader(code.data(), code.size());
+
+    return ShaderModule {
+        module,
+        std::move(reflections)
+    };
+}
+
+VkPipelineLayout CreatePipelineLayout(VkDevice device, 
+                                      ShaderModules shaders,
+                                      const std::vector<VkPushConstantRange>& ranges,
+                                      const std::vector<PushDescriptorBinding>& stages) {
     std::vector<VkDescriptorSetLayoutBinding> bindings;
     for (size_t i = 0; i < stages.size(); i++) {
-        if (stages[i] == 0)
+        if (!stages[i].flags)
             continue;
         VkDescriptorSetLayoutBinding binding = {};
         binding.binding = i;
-        binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        binding.descriptorType = stages[i].type;
         binding.descriptorCount = 1;
-        binding.stageFlags = stages[i];
+        binding.stageFlags = stages[i].flags;
         bindings.push_back(binding);
     }
 
@@ -252,8 +287,6 @@ VkPipelineLayout CreatePipelineLayout(VkDevice device, ShaderModules shaders) {
 
     VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
     VK_ASSERT(vkCreateDescriptorSetLayout(device, &set_create_info, nullptr, &set_layout));
-
-    std::vector<VkPushConstantRange> ranges = GetPushConstantRange(shaders);
 
     VkPipelineLayoutCreateInfo info = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
     info.setLayoutCount = 1;
@@ -272,8 +305,8 @@ VkPipelineLayout CreatePipelineLayout(VkDevice device, ShaderModules shaders) {
 VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass pass, ShaderModules shaders) {
     std::vector<VkPipelineShaderStageCreateInfo> stages;
 
-    for (auto& shader : shaders)
-        stages.push_back(GetPipelineShaderStageCreateInfo(shader, "main"));
+    for (const auto& shader : shaders)
+        stages.push_back(GetPipelineShaderStageCreateInfo(shader, main));
 
     VkPipelineVertexInputStateCreateInfo vertex_input_info { 
         VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO 
@@ -366,4 +399,20 @@ VkDescriptorUpdateTemplate CreateDescriptorUpdateTemplate(VkDevice device, VkPip
     VkDescriptorUpdateTemplate descriptorUpdateTemplate = VK_NULL_HANDLE;
     VK_ASSERT(vkCreateDescriptorUpdateTemplate(device, &info, nullptr, &descriptorUpdateTemplate));
     return descriptorUpdateTemplate;
+}
+
+Program CreateProgram(VkDevice device, ShaderModules shaders) {
+    auto stages = GetPushDesciptorBindingStages(shaders);
+    auto ranges = GetPushConstantRangeUnion(shaders);
+    auto layout = CreatePipelineLayout(device, shaders, { ranges }, stages);
+    auto update = CreateDescriptorUpdateTemplate(device, layout, shaders);
+
+    return Program { layout, update, ranges.stageFlags };
+}
+
+void DestroyProgram(VkDevice device, Program* program) {
+    vkDestroyPipelineLayout(device, program->layout, nullptr);
+    program->layout = VK_NULL_HANDLE;
+    vkDestroyDescriptorUpdateTemplate(device, program->update, nullptr);
+    program->update = VK_NULL_HANDLE;
 }

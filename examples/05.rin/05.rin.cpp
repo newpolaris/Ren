@@ -23,8 +23,7 @@
 
 #include "mesh.h"
 #include "macro.h"
-#include "shader_module.h"
-#include "program.h"
+#include "shaders.h"
 #include "synchronizes.h"
 #include "resources.h"
 
@@ -587,9 +586,8 @@ int main() {
     ShaderModule fragment_shader = CreateShaderModule(device, "shaders/05.rin/base.frag.spv");
     ShaderModules shaders = { vertex_shader, fragment_shader };
 
-    VkPipelineLayout layout = CreatePipelineLayout(device, shaders);
-    VkPipeline pipeline = CreatePipeline(device, layout, renderpass, shaders);
-    VkDescriptorUpdateTemplate descriptorUpdateTemplate = CreateDescriptorUpdateTemplate(device, layout, shaders);
+    Program program = CreateProgram(device, shaders);
+    VkPipeline pipeline = CreatePipeline(device, program.layout, renderpass, shaders);
 
     VkCommandPoolCreateInfo info = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
     info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -725,7 +723,7 @@ int main() {
         vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
         PushDescriptorSets descriptors[] = { vb };
-        vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, descriptorUpdateTemplate, layout, 0, &descriptors);
+        vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, program.update, program.layout, 0, &descriptors);
 
     #if CLUSTER_CULL
         vkCmdBindIndexBuffer(command_buffer, mib.buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -734,7 +732,7 @@ int main() {
     #endif
 
         for (auto draw : draws) {
-            vkCmdPushConstants(command_buffer, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(draw), &draw);
+            vkCmdPushConstants(command_buffer, program.layout, program.push_constant_stages, 0, sizeof(draw), &draw);
         #if CLUSTER_CULL
             vkCmdDrawIndexedIndirect(command_buffer, idcb.buffer, 0, indirect_draw_count, sizeof(VkDrawIndexedIndirectCommand));
         #else
@@ -825,8 +823,7 @@ int main() {
     vkDestroyQueryPool(device, timestamp_pool, nullptr);
 
     vkDestroyPipeline(device, pipeline, nullptr);
-    vkDestroyPipelineLayout(device, layout, nullptr);
-    vkDestroyDescriptorUpdateTemplate(device, descriptorUpdateTemplate, nullptr);
+    DestroyProgram(device, &program);
     vkDestroyShaderModule(device, vertex_shader.module, nullptr);
     vkDestroyShaderModule(device, fragment_shader.module, nullptr);
 
