@@ -37,6 +37,14 @@ namespace {
     bool cluster_culling = true;
 };
 
+struct alignas(16) GraphicsData {
+    glm::mat4x4 project;
+};
+
+struct alignas(16) CullingData {
+    uint32_t draw_count;
+};
+
 VkInstance CreateInstance(
     const char* ApplicationName,
     const char* EngineName) {
@@ -489,6 +497,11 @@ static void KeyboardCallback(GLFWwindow* windows, int key, int scancode, int act
         cluster_culling = !cluster_culling;
 }
 
+static void KeyboardUpdate(GLFWwindow* windows) {
+    if (GLFW_PRESS == glfwGetKey(windows, GLFW_KEY_C))
+        cluster_culling = !cluster_culling;
+}
+
 static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
                                                     VkDebugUtilsMessageTypeFlagsEXT messageType,
                                                     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
@@ -553,7 +566,7 @@ int main() {
     VkDebugUtilsMessengerEXT messenger = CreateDebugCallback(instance, DebugCallback);
 
     GLFWwindow* windows = glfwCreateWindow(width, height, application_name, nullptr, nullptr);
-    glfwSetKeyCallback(windows, KeyboardCallback);
+    // glfwSetKeyCallback(windows, KeyboardCallback);
     VkSurfaceKHR surface = CreateSurface(instance, windows);
 
     VkPhysicalDevice physical_device = CreatePhysicalDevice(instance);
@@ -656,7 +669,7 @@ int main() {
 
     std::default_random_engine eng {10};
     std::uniform_real_distribution<float> urd(0, 1);
-    uint32_t draw_count = 2000;
+    const uint32_t draw_count = 2000;
     std::vector<MeshDraw> draws(draw_count);
     for (uint32_t i = 0; i < draw_count; i++) {
         glm::vec3 axis = glm::vec3( urd(eng)*2 - 1, urd(eng)*2 - 1, urd(eng)*2 - 1);
@@ -708,6 +721,7 @@ int main() {
 
     while(!glfwWindowShouldClose(windows)) {
         glfwPollEvents();
+        KeyboardUpdate(windows);
 
         auto fence = fences[current_frame];
     #if SUPPORT_MULTIFRAME_IN_FLIGHT
@@ -762,10 +776,18 @@ int main() {
 
         vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, current_frame*2);
 
+        uint32_t indirect_command_count = draw_count;
+        if (cluster_culling)
+            indirect_command_count = indirect_draw_count;
+
         float aspect = static_cast<float>(swapchain.extent.width) / swapchain.extent.height;
-        const PushConstant constant = { PerspectiveProjection(glm::radians(70.f), aspect, 0.01f) };
+        const GraphicsData graphics_data = { PerspectiveProjection(glm::radians(70.f), aspect, 0.01f) };
+        CullingData culling_data = { indirect_command_count };
+        if (cluster_culling)
+            culling_data.draw_count = draw_count;
 
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmd_pipeline);
+        if (!cluster_culling)
         {
             vkCmdFillBuffer(command_buffer, draw_count_buffer.buffer, 0, 4, 0);
 
@@ -776,10 +798,10 @@ int main() {
             PushDescriptorSets descriptors[] = { meshdraw_buffer, meshdraw_command_buffer, draw_count_buffer };
             vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, drawcmd_program.update, drawcmd_program.layout, 0, &descriptors);
 
-            vkCmdPushConstants(command_buffer, drawcmd_program.layout, drawcmd_program.push_constant_stages, 0, sizeof(constant), &constant);
-            vkCmdDispatch(command_buffer, uint32_t((draws.size() + 31) / 32), 1, 1);
+            vkCmdPushConstants(command_buffer, drawcmd_program.layout, drawcmd_program.push_constant_stages, 0, sizeof(culling_data), &culling_data);
+            vkCmdDispatch(command_buffer, uint32_t((draw_count + 31) / 32), 1, 1);
 
-            // TODO: No validation error and no exception in vulkan; Not needed?
+            // Without barrier, first attempt that change culling status will result empty screen in few frames;
             VkBufferMemoryBarrier command_end[] = { 
                 CreateBufferBarrier(meshdraw_command_buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
                 CreateBufferBarrier(draw_count_buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
@@ -814,21 +836,25 @@ int main() {
         vkCmdSetViewport(command_buffer, 0, 1, &viewport);
         vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
-        PushDescriptorSets descriptors[] = { vb, meshdraw_buffer };
-        vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, mesh_program.update, mesh_program.layout, 0, &descriptors);
+        if (cluster_culling) {
+            PushDescriptorSets descriptors[] = {vb, meshdraw_buffer, idcb};
+            vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, mesh_program.update, mesh_program.layout, 0, &descriptors);
+        } else {
+            PushDescriptorSets descriptors[] = {vb, meshdraw_buffer, meshdraw_command_buffer};
+            vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, mesh_program.update, mesh_program.layout, 0, &descriptors);
+        }
 
         if (cluster_culling)
             vkCmdBindIndexBuffer(command_buffer, meshlet_index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
         else
             vkCmdBindIndexBuffer(command_buffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 
-        vkCmdPushConstants(command_buffer, mesh_program.layout, mesh_program.push_constant_stages, 0, sizeof(constant), &constant);
+        vkCmdPushConstants(command_buffer, mesh_program.layout, mesh_program.push_constant_stages, 0, sizeof(graphics_data), &graphics_data);
         if (cluster_culling)
-            vkCmdDrawIndexedIndirect(command_buffer, idcb.buffer, 0, indirect_draw_count, sizeof(VkDrawIndexedIndirectCommand));
-        else {
-            // vkCmdDrawIndexedIndirect(command_buffer, mdcb.buffer, 0, static_cast<uint32_t>(draws.size()), sizeof(MeshDrawCommand));
-            vkCmdDrawIndexedIndirectCountKHR(command_buffer, meshdraw_command_buffer.buffer, 0, draw_count_buffer.buffer, 0, static_cast<uint32_t>(draws.size()), sizeof(MeshDrawCommand));
-        }
+            vkCmdDrawIndexedIndirect(command_buffer, idcb.buffer, 0, indirect_command_count, sizeof(VkDrawIndexedIndirectCommand));
+        else 
+            vkCmdDrawIndexedIndirectCountKHR(command_buffer, meshdraw_command_buffer.buffer, 0, draw_count_buffer.buffer, 0, 
+                                             indirect_command_count, sizeof(MeshDrawCommand));
 
         vkCmdEndRenderPass(command_buffer);
 

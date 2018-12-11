@@ -9,7 +9,7 @@
 layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 layout(push_constant) uniform param_block {
-    PushConstant constant;
+    CullingData constant;
 };
 
 layout(binding = 0) readonly buffer MeshDraws {
@@ -28,10 +28,8 @@ void main() {
     uint gi = gl_WorkGroupID.x; // SV_GroupID	
     uint dti = gl_GlobalInvocationID.x; // SV_DispatchThreadID
 
-    uint idx = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * gl_WorkGroupSize.x;
-
-    if (idx == 0)
-        atomicExchange(draw_command_count, 0);
+    if (dti >= constant.draw_count)
+        return;
 
     uint index = atomicAdd(draw_command_count, 1);
 

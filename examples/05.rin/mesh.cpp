@@ -100,6 +100,7 @@ std::vector<Meshlet> BuildMeshlets(const Mesh& mesh) {
 
         meshlet_result.push_back(m);
     }
+    // TODO: 32 packing
 
     return std::move(meshlet_result);
 }

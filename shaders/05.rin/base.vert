@@ -7,7 +7,7 @@
 #include "mesh.h"
 
 layout(push_constant) uniform param_block {
-    PushConstant constant;
+    GraphicsData constant;
 };
 
 layout(binding = 0) readonly buffer Vertices {
@@ -18,6 +18,10 @@ layout(binding = 1) readonly buffer MeshDraws {
     MeshDraw mesh_draws[];
 };
 
+layout(binding = 2) readonly buffer MeshDrawCommands {
+    MeshDrawCommand commands[];
+};
+
 layout(location = 0) out vec3 color;
 
 vec3 rotate_position(vec4 quat, vec3 v) {
@@ -25,7 +29,7 @@ vec3 rotate_position(vec4 quat, vec3 v) {
  }
 
 void main() {
-    MeshDraw draws = mesh_draws[gl_InstanceIndex];
+    MeshDraw draws = mesh_draws[commands[gl_DrawIDARB].first_instance];
 
     // To handle "Capability Int8 is not allowed by Vulkan 1.1 specification (or requires extension) OpCapability Int8"
     // Not allowed assignment / direct cast to float (allowed via int) (maybe? with/without both raise validation error)

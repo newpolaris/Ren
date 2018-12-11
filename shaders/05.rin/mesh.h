@@ -4,7 +4,7 @@ struct Vertex {
     f16vec2 texcoords;
 };
 
-struct PushConstant
+struct GraphicsData
 {
     mat4x4 project;
 };
@@ -25,4 +25,10 @@ struct MeshDrawCommand
     uint first_index;
     uint vertex_offset;
     uint first_instance;
+};
+
+struct CullingData
+{
+    uint draw_count;
+    uint pad, pad1, pad2;
 };
