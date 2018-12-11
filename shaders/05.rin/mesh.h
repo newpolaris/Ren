@@ -14,5 +14,15 @@ struct MeshDraw
     vec3 position;
     float scale;
     vec4 orientation;
-    uint indirect_command[5];
+};
+
+// Aka. VkDrawIndexedIndirectCommand
+struct MeshDrawCommand 
+{
+    uint index_count;
+    uint instance_count;
+    uint first_index;
+    uint vertex_offset;
+    uint first_instance;
+    uint pad[3];
 };

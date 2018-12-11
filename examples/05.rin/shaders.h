@@ -32,7 +32,8 @@ struct Program
     VkShaderStageFlags push_constant_stages;
 };
 
-Program CreateProgram(VkDevice device, ShaderModules shaders);
+Program CreateProgram(VkDevice device, VkPipelineBindPoint bindpoint, ShaderModules shaders);
 void DestroyProgram(VkDevice device, Program* program);
 
-VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass pass, ShaderModules shaders);
+VkPipeline CreateComputePipeline(VkDevice device, VkPipelineLayout layout, ShaderModule shader);
+VkPipeline CreateGraphicsPipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass pass, ShaderModules shaders);

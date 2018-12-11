@@ -26,6 +26,7 @@
 #include "shaders.h"
 #include "synchronizes.h"
 #include "resources.h"
+#include "bits.h"
 
 #include <random>
 #include <glm/ext/quaternion_transform.hpp>
@@ -567,7 +568,7 @@ int main() {
     VkFormat color_format = surface_properties.format.format;
     VkFormat depth_format = VK_FORMAT_D32_SFLOAT;
 
-    const VkRenderPass renderpass = CreateRenderPass(device, surface_properties.format.format, VK_FORMAT_D32_SFLOAT);
+    const VkRenderPass mesh_renderpass = CreateRenderPass(device, surface_properties.format.format, VK_FORMAT_D32_SFLOAT);
 
     Swapchain swapchain = {};
     VkViewport viewport = {};
@@ -581,12 +582,16 @@ int main() {
     VkQueue present_queue = VK_NULL_HANDLE;
     vkGetDeviceQueue(device, surface_properties.queue_family_index, queue_index, &present_queue);
 
+    ShaderModule drawcmd_shader = CreateShaderModule(device, "shaders/05.rin/drawcmd.comp.spv");
+    Program drawcmd_program = CreateProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, {drawcmd_shader});
+    VkPipeline drawcmd_pipeline = CreateComputePipeline(device, drawcmd_program.layout, drawcmd_shader);
+
     ShaderModule vertex_shader = CreateShaderModule(device, "shaders/05.rin/base.vert.spv");
     ShaderModule fragment_shader = CreateShaderModule(device, "shaders/05.rin/base.frag.spv");
     ShaderModules shaders = { vertex_shader, fragment_shader };
 
-    Program program = CreateProgram(device, shaders);
-    VkPipeline pipeline = CreatePipeline(device, program.layout, renderpass, shaders);
+    Program mesh_program = CreateProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders);
+    VkPipeline mesh_pipeline = CreateGraphicsPipeline(device, mesh_program.layout, mesh_renderpass, shaders);
 
     VkCommandPoolCreateInfo info = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
     info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -661,17 +666,18 @@ int main() {
         draws[i].position[2] = urd(eng) * 20.f - 10.f;
         draws[i].scale = urd(eng) + 0.5f;
         draws[i].orientation = glm::rotate(glm::quat(1, 0, 0, 0), angle, axis); 
-        draws[i].indirect_command = {};
-        draws[i].indirect_command.indexCount = static_cast<uint32_t>(mesh.indices.size());
-        draws[i].indirect_command.instanceCount = 1;
-        draws[i].indirect_command.firstInstance = i;
     }
 
     VkDeviceSize mdb_size = sizeof(MeshDraw) * draws.size();
     Buffer mdb = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        device_local_flags, mib_size });
+        device_local_flags, mdb_size });
     UploadBuffer(device, command_pool, command_queue, staging, mdb, mdb_size, draws.data());
+
+    VkDeviceSize mdcb_size = sizeof(MeshDrawCommand) * draws.size();
+    Buffer mdcb = CreateBuffer(device, physical_properties.memory, {
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        device_local_flags, mdcb_size });
 
     std::vector<VkDrawIndexedIndirectCommand> indirects = CreateIndirectCommandBuffer(mesh, draws);
     const uint32_t indirect_draw_count = static_cast<uint32_t>(indirects.size());
@@ -714,7 +720,7 @@ int main() {
             VK_ASSERT(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &capabilities));
             if (capabilities.currentExtent.height == 0 && capabilities.currentExtent.width == 0)
                 continue;
-            CreateSwapchain(device, capabilities, surface, surface_properties, renderpass, &swapchain);
+            CreateSwapchain(device, capabilities, surface, surface_properties, mesh_renderpass, &swapchain);
             UpdateViewportScissor(swapchain.extent, &viewport, &scissor);
 
             vkDestroyFramebuffer(device, framebuffer, nullptr);
@@ -735,7 +741,7 @@ int main() {
                 depth_format,
                 extent
             });
-            framebuffer = CreateFramebuffer(device, renderpass, {color.view, depth.view}, extent);
+            framebuffer = CreateFramebuffer(device, mesh_renderpass, {color.view, depth.view}, extent);
             continue;
         } 
         ASSERT(result == VK_SUCCESS);
@@ -747,6 +753,23 @@ int main() {
         VK_ASSERT(vkBeginCommandBuffer(command_buffer, &begininfo));
 
         vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, current_frame*2);
+
+        float aspect = static_cast<float>(swapchain.extent.width) / swapchain.extent.height;
+        const PushConstant constant = { PerspectiveProjection(glm::radians(70.f), aspect, 0.01f) };
+
+        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmd_pipeline);
+        {
+            // input: MeshDraw mdb, output: VkDrawIndexedIndirectCommand mdcb
+            PushDescriptorSets descriptors[] = { mdb, mdcb };
+            vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, drawcmd_program.update, drawcmd_program.layout, 0, &descriptors);
+
+            vkCmdPushConstants(command_buffer, drawcmd_program.layout, drawcmd_program.push_constant_stages, 0, sizeof(constant), &constant);
+            vkCmdDispatch(command_buffer, uint32_t((draws.size() + 31) / 32), 1, 1);
+
+            // TODO: No validation error and any error;
+            VkBufferMemoryBarrier command_end = CreateBufferBarrier(mdcb, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
+			vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, 0, 1, &command_end, 0, 0);
+        }
 
         VkImageMemoryBarrier render_begin[] = {
             CreateImageBarrier(color.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT),
@@ -764,34 +787,30 @@ int main() {
         clear_values[1].depthStencil = clear_depth;
 
         VkRenderPassBeginInfo pass = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-        pass.renderPass = renderpass;
+        pass.renderPass = mesh_renderpass;
         pass.framebuffer = framebuffer;
         pass.renderArea = scissor;
         pass.clearValueCount = ARRAY_SIZE(clear_values);
         pass.pClearValues = clear_values;
 
         vkCmdBeginRenderPass(command_buffer, &pass, VK_SUBPASS_CONTENTS_INLINE);
-        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pipeline);
         vkCmdSetViewport(command_buffer, 0, 1, &viewport);
         vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
         PushDescriptorSets descriptors[] = { vb, mdb };
-        vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, program.update, program.layout, 0, &descriptors);
+        vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, mesh_program.update, mesh_program.layout, 0, &descriptors);
 
         if (cluster_culling)
             vkCmdBindIndexBuffer(command_buffer, mib.buffer, 0, VK_INDEX_TYPE_UINT32);
         else
             vkCmdBindIndexBuffer(command_buffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 
-        float aspect = static_cast<float>(swapchain.extent.width) / swapchain.extent.height;
-        const PushConstant constant = { PerspectiveProjection(glm::radians(70.f), aspect, 0.01f) };
-
-        vkCmdPushConstants(command_buffer, program.layout, program.push_constant_stages, 0, sizeof(constant), &constant);
+        vkCmdPushConstants(command_buffer, mesh_program.layout, mesh_program.push_constant_stages, 0, sizeof(constant), &constant);
         if (cluster_culling)
             vkCmdDrawIndexedIndirect(command_buffer, idcb.buffer, 0, indirect_draw_count, sizeof(VkDrawIndexedIndirectCommand));
         else
-            vkCmdDrawIndexedIndirect(command_buffer, mdb.buffer, offsetof(MeshDraw, indirect_command), 
-                                     static_cast<uint32_t>(draws.size()), sizeof(MeshDraw));
+            vkCmdDrawIndexedIndirect(command_buffer, mdcb.buffer, 0, static_cast<uint32_t>(draws.size()), sizeof(MeshDrawCommand));
 
         vkCmdEndRenderPass(command_buffer);
 
@@ -901,6 +920,7 @@ int main() {
     DestroyBuffer(device, &mib);
     DestroyBuffer(device, &mdb);
     DestroyBuffer(device, &idcb);
+    DestroyBuffer(device, &mdcb);
 
     vkDestroyFramebuffer(device, framebuffer, nullptr);
 
@@ -909,8 +929,14 @@ int main() {
     
     vkDestroyQueryPool(device, timestamp_pool, nullptr);
 
-    vkDestroyPipeline(device, pipeline, nullptr);
-    DestroyProgram(device, &program);
+    vkDestroyPipeline(device, drawcmd_pipeline, nullptr);
+    DestroyProgram(device, &drawcmd_program);
+
+    vkDestroyShaderModule(device, drawcmd_shader.module, nullptr);
+
+    vkDestroyPipeline(device, mesh_pipeline, nullptr);
+    DestroyProgram(device, &mesh_program);
+
     vkDestroyShaderModule(device, vertex_shader.module, nullptr);
     vkDestroyShaderModule(device, fragment_shader.module, nullptr);
 
@@ -918,7 +944,7 @@ int main() {
 
     DestroySwapchain(device, &swapchain);
 
-    vkDestroyRenderPass(device, renderpass, nullptr);
+    vkDestroyRenderPass(device, mesh_renderpass, nullptr);
     vkDestroyDevice(device, nullptr);
     device = VK_NULL_HANDLE;
 

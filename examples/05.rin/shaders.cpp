@@ -280,7 +280,6 @@ VkPipelineLayout CreatePipelineLayout(VkDevice device,
         bindings.push_back(binding);
     }
 
-
     VkDescriptorSetLayoutCreateInfo set_create_info = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
     set_create_info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
     set_create_info.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -303,7 +302,21 @@ VkPipelineLayout CreatePipelineLayout(VkDevice device,
     return layout;
 }
 
-VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass pass, ShaderModules shaders) {
+VkPipeline CreateComputePipeline(VkDevice device, VkPipelineLayout layout, ShaderModule shader) {
+    VkPipelineShaderStageCreateInfo stage = GetPipelineShaderStageCreateInfo(shader, main);
+
+    VkComputePipelineCreateInfo info = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+    info.stage = stage;
+    info.layout = layout;
+
+    VkPipelineCache pipeline_cache = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateComputePipelines(device, pipeline_cache, 1, &info, nullptr, &pipeline));
+
+    return pipeline;
+}
+
+VkPipeline CreateGraphicsPipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass pass, ShaderModules shaders) {
     std::vector<VkPipelineShaderStageCreateInfo> stages;
 
     for (const auto& shader : shaders)
@@ -372,7 +385,9 @@ VkPipeline CreatePipeline(VkDevice device, VkPipelineLayout layout, VkRenderPass
     return pipeline;
 }
 
-VkDescriptorUpdateTemplate CreateDescriptorUpdateTemplate(VkDevice device, VkPipelineLayout layout, 
+VkDescriptorUpdateTemplate CreateDescriptorUpdateTemplate(VkDevice device,
+                                                          VkPipelineBindPoint bindpoint,
+                                                          VkPipelineLayout layout,
                                                           ShaderModules shaders) {
     std::vector<VkDescriptorType> bindings(32, VK_DESCRIPTOR_TYPE_MAX_ENUM);
 
@@ -399,7 +414,7 @@ VkDescriptorUpdateTemplate CreateDescriptorUpdateTemplate(VkDevice device, VkPip
     info.pDescriptorUpdateEntries = entries.data();
     info.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR;
     info.descriptorSetLayout = VK_NULL_HANDLE;
-    info.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    info.pipelineBindPoint = bindpoint;
     info.pipelineLayout = layout;
     info.set = 0;
 
@@ -408,11 +423,11 @@ VkDescriptorUpdateTemplate CreateDescriptorUpdateTemplate(VkDevice device, VkPip
     return descriptorUpdateTemplate;
 }
 
-Program CreateProgram(VkDevice device, ShaderModules shaders) {
+Program CreateProgram(VkDevice device, VkPipelineBindPoint bindpoint, ShaderModules shaders) {
     auto stages = GetPushDesciptorBindingStages(shaders);
     auto ranges = GetPushConstantRangeUnion(shaders);
     auto layout = CreatePipelineLayout(device, shaders, { ranges }, stages);
-    auto update = CreateDescriptorUpdateTemplate(device, layout, shaders);
+    auto update = CreateDescriptorUpdateTemplate(device, bindpoint, layout, shaders);
 
     return Program { layout, update, ranges.stageFlags };
 }

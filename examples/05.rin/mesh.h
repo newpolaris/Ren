@@ -19,7 +19,6 @@ struct alignas(16) MeshDraw
     glm::vec3 position;
     float scale;
     glm::quat orientation;
-    VkDrawIndexedIndirectCommand indirect_command;
 };
 
 struct alignas(16) Vertex
@@ -27,6 +26,14 @@ struct alignas(16) Vertex
     float x, y, z;
     uint8_t nx, ny, nz, nw;
     uint16_t tu, tv;
+};
+
+struct alignas(16) MeshDrawCommand {
+    uint32_t index_count;
+    uint32_t instance_count;
+    uint32_t first_index;
+    int32_t vertex_offset;
+    uint32_t first_instance;
 };
 
 enum { kMeshVertices = 64 };

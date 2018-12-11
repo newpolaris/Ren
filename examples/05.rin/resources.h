@@ -12,14 +12,14 @@ struct BufferCreateInfo {
 struct Buffer {
     VkBuffer buffer;
     VkDeviceMemory memory;
-    VkBufferUsageFlags usage;
-    VkMemoryPropertyFlags flags;
+    BufferCreateInfo info;
     VkDeviceSize size;
     void* data;
 };
 
 Buffer CreateBuffer(VkDevice device, const VkPhysicalDeviceMemoryProperties& properties, const BufferCreateInfo& info);
 void DestroyBuffer(VkDevice device, Buffer* buffer);
+VkBufferMemoryBarrier CreateBufferBarrier(const Buffer& buffer, VkAccessFlags src, VkAccessFlags dst);
 void UploadBuffer(VkDevice device, VkCommandPool pool, VkQueue queue, const Buffer& staging, const Buffer& dst, 
                   VkDeviceSize size, const void* data);
 

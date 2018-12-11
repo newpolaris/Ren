@@ -47,7 +47,7 @@ Buffer CreateBuffer(VkDevice device, const VkPhysicalDeviceMemoryProperties& pro
             memcpy(data, info.data, static_cast<uint32_t>(info.size));
     }
 
-    return Buffer { buffer, memory, info.flags, info.usage, requirement.size, data };
+    return Buffer { buffer, memory, info, requirement.size, data };
 }
 
 void DestroyBuffer(VkDevice device, Buffer* buffer) {
@@ -100,6 +100,19 @@ void UploadBuffer(VkDevice device, VkCommandPool pool, VkQueue queue,
     memcpy(staging.data, data, static_cast<size_t>(size));
     
     CopyBuffer(device, pool, queue, staging, size, dst); 
+}
+
+VkBufferMemoryBarrier CreateBufferBarrier(const Buffer& buffer, VkAccessFlags src, VkAccessFlags dst) {
+    VkBufferMemoryBarrier barrier = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
+    barrier.srcAccessMask = src;
+    barrier.dstAccessMask = dst;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.buffer = buffer.buffer;
+    barrier.offset = 0; // TODO:
+    barrier.size = buffer.info.size;
+
+    return barrier;
 }
 
 Image CreateImage(VkDevice device, const VkPhysicalDeviceMemoryProperties& properties, const ImageCreateInfo& info) {
