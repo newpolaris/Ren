@@ -104,6 +104,7 @@ std::vector<Meshlet> BuildMeshlets(const Mesh& mesh) {
     return std::move(meshlet_result);
 }
 
+// TODO: remove function and indirect access in vertex shader?
 void BuildMeshletIndices(Mesh* mesh) {
     uint32_t cnt = 0;
     std::vector<uint32_t> meshlet_indices(mesh->indices.size());

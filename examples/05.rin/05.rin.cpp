@@ -176,6 +176,7 @@ VkDevice CreateDevice(VkPhysicalDevice physical_device, uint32_t queue_family_in
         VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
         VK_KHR_16BIT_STORAGE_EXTENSION_NAME,
         VK_KHR_8BIT_STORAGE_EXTENSION_NAME,
+        VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME,
     };
 
     const float qeue_priorites[] = { 1.f };
@@ -643,13 +644,13 @@ int main() {
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, ib_size });
 
-    Buffer mib = CreateBuffer(device, physical_properties.memory, {
+    Buffer meshlet_index_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, mib_size });
 
     UploadBuffer(device, command_pool, command_queue, staging, vb, vb_size, mesh.vertices.data());
     UploadBuffer(device, command_pool, command_queue, staging, ib, ib_size, mesh.indices.data());
-    UploadBuffer(device, command_pool, command_queue, staging, mib, mib_size, mesh.meshlet_indices.data());
+    UploadBuffer(device, command_pool, command_queue, staging, meshlet_index_buffer, mib_size, mesh.meshlet_indices.data());
 
     VkQueryPool timestamp_pool = CreateQueryPool(device, VK_QUERY_TYPE_TIMESTAMP, 1024, 0);
 
@@ -671,16 +672,20 @@ int main() {
 
     // meshdarw buffer
     const VkDeviceSize mdb_size = sizeof(MeshDraw) * draws.size();
-    Buffer mdb = CreateBuffer(device, physical_properties.memory, {
+    Buffer meshdraw_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, mdb_size });
-    UploadBuffer(device, command_pool, command_queue, staging, mdb, mdb_size, draws.data());
+    UploadBuffer(device, command_pool, command_queue, staging, meshdraw_buffer, mdb_size, draws.data());
 
     // meshdraw-command buffer
     const VkDeviceSize mdcb_size = 1024*1024*128;
-    Buffer mdcb = CreateBuffer(device, physical_properties.memory, {
+    Buffer meshdraw_command_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, mdcb_size });
+
+    Buffer draw_count_buffer = CreateBuffer(device, physical_properties.memory, {
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        device_local_flags, 4});
 
     std::vector<VkDrawIndexedIndirectCommand> indirects = CreateIndirectCommandBuffer(mesh, draws);
     const uint32_t indirect_draw_count = static_cast<uint32_t>(indirects.size());
@@ -762,16 +767,24 @@ int main() {
 
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmd_pipeline);
         {
-            // input: MeshDraw mdb, output: VkDrawIndexedIndirectCommand mdcb
-            PushDescriptorSets descriptors[] = { mdb, mdcb };
+            vkCmdFillBuffer(command_buffer, draw_count_buffer.buffer, 0, 4, 0);
+
+            VkBufferMemoryBarrier fill_barrier = CreateBufferBarrier(draw_count_buffer, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+            vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0, 1, &fill_barrier, 0, 0);
+
+            // input, output, output
+            PushDescriptorSets descriptors[] = { meshdraw_buffer, meshdraw_command_buffer, draw_count_buffer };
             vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, drawcmd_program.update, drawcmd_program.layout, 0, &descriptors);
 
             vkCmdPushConstants(command_buffer, drawcmd_program.layout, drawcmd_program.push_constant_stages, 0, sizeof(constant), &constant);
             vkCmdDispatch(command_buffer, uint32_t((draws.size() + 31) / 32), 1, 1);
 
             // TODO: No validation error and no exception in vulkan; Not needed?
-            VkBufferMemoryBarrier command_end = CreateBufferBarrier(mdcb, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
-			vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, 0, 1, &command_end, 0, 0);
+            VkBufferMemoryBarrier command_end[] = { 
+                CreateBufferBarrier(meshdraw_command_buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
+                CreateBufferBarrier(draw_count_buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
+            };
+			vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, 0, ARRAY_SIZE(command_end), command_end, 0, 0);
         }
 
         VkImageMemoryBarrier render_begin[] = {
@@ -801,19 +814,21 @@ int main() {
         vkCmdSetViewport(command_buffer, 0, 1, &viewport);
         vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
-        PushDescriptorSets descriptors[] = { vb, mdb };
+        PushDescriptorSets descriptors[] = { vb, meshdraw_buffer };
         vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, mesh_program.update, mesh_program.layout, 0, &descriptors);
 
         if (cluster_culling)
-            vkCmdBindIndexBuffer(command_buffer, mib.buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdBindIndexBuffer(command_buffer, meshlet_index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
         else
             vkCmdBindIndexBuffer(command_buffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 
         vkCmdPushConstants(command_buffer, mesh_program.layout, mesh_program.push_constant_stages, 0, sizeof(constant), &constant);
         if (cluster_culling)
             vkCmdDrawIndexedIndirect(command_buffer, idcb.buffer, 0, indirect_draw_count, sizeof(VkDrawIndexedIndirectCommand));
-        else
-            vkCmdDrawIndexedIndirect(command_buffer, mdcb.buffer, 0, static_cast<uint32_t>(draws.size()), sizeof(MeshDrawCommand));
+        else {
+            // vkCmdDrawIndexedIndirect(command_buffer, mdcb.buffer, 0, static_cast<uint32_t>(draws.size()), sizeof(MeshDrawCommand));
+            vkCmdDrawIndexedIndirectCountKHR(command_buffer, meshdraw_command_buffer.buffer, 0, draw_count_buffer.buffer, 0, static_cast<uint32_t>(draws.size()), sizeof(MeshDrawCommand));
+        }
 
         vkCmdEndRenderPass(command_buffer);
 
@@ -920,10 +935,11 @@ int main() {
     DestroyBuffer(device, &staging);
     DestroyBuffer(device, &vb);
     DestroyBuffer(device, &ib);
-    DestroyBuffer(device, &mib);
-    DestroyBuffer(device, &mdb);
+    DestroyBuffer(device, &meshlet_index_buffer);
+    DestroyBuffer(device, &meshdraw_buffer);
     DestroyBuffer(device, &idcb);
-    DestroyBuffer(device, &mdcb);
+    DestroyBuffer(device, &meshdraw_command_buffer);
+    DestroyBuffer(device, &draw_count_buffer);
 
     vkDestroyFramebuffer(device, framebuffer, nullptr);
 

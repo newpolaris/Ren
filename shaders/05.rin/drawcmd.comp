@@ -19,15 +19,25 @@ layout(binding = 0) readonly buffer MeshDraws {
 layout(binding = 1) writeonly buffer MeshDrawCommands {
     MeshDrawCommand commands[];
 };
+layout(binding = 2) writeonly buffer DrawCommandCount {
+	uint draw_command_count;
+};
 
 void main() {
 	uint ti = gl_LocalInvocationID.x; // SV_GroupThreadID
     uint gi = gl_WorkGroupID.x; // SV_GroupID	
     uint dti = gl_GlobalInvocationID.x; // SV_DispatchThreadID
 
-    commands[dti].index_count = mesh_draws[dti].index_count;
-    commands[dti].instance_count = 1;
-    commands[dti].first_index = 0;
-    commands[dti].vertex_offset = 0;
-    commands[dti].first_instance = dti;
+    uint idx = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+
+    if (idx == 0)
+        atomicExchange(draw_command_count, 0);
+
+    uint index = atomicAdd(draw_command_count, 1);
+
+    commands[index].index_count = mesh_draws[dti].index_count;
+    commands[index].instance_count = 1;
+    commands[index].first_index = 0;
+    commands[index].vertex_offset = 0;
+    commands[index].first_instance = dti;
 }
