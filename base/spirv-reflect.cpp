@@ -158,11 +158,13 @@ struct StructType_
 struct MatrixType_
 {
     word_t result_id;
+    uint32_t component_type_id;
+    uint32_t component_count;
 };
 
 using Name_ = std::string;
 using MemberName_ = std::unordered_map<word_t, std::string>;
-using PrimitiveType_ = std::variant<IntegerType_, FloatType_, VectorType_>;
+using PrimitiveType_ = std::variant<IntegerType_, FloatType_, VectorType_, MatrixType_>;
 
 // borrowed from 'vulkan-cpp-library'
 struct IntermediateType {
@@ -305,7 +307,15 @@ void ParseInstruction(word_t opcode, size_t word_count, const StreamReader& read
         uint32_t ctid = reader.uint32(2);
         uint32_t cc = reader.uint32(3);
         intermediate->primitive_types.emplace(rid, VectorType_ { rid, ctid, cc });
-
+    } break;
+    case SpvOpTypeMatrix:
+    {
+        ASSERT(word_count == 4);
+        // %114 = OpTypeMatrix %7 4
+        uint32_t rid = reader.uint32(1);
+        uint32_t ctid = reader.uint32(2);
+        uint32_t cc = reader.uint32(3);
+        intermediate->primitive_types.emplace(rid, MatrixType_ { rid, ctid, cc });
     } break;
     case SpvOpTypeStruct:
     {
@@ -351,7 +361,7 @@ public:
     void operator()(const internal::FloatType_& type) {
         PrimitiveType p = {
             SpvOpTypeFloat,
-            1,
+            {1, 1},
             type.width,
         };
         module_->primitive_types.emplace(type.result_id, std::move(p));
@@ -360,7 +370,7 @@ public:
     void operator()(const internal::IntegerType_& type) {
         PrimitiveType p = {
             SpvOpTypeInt,
-            1,
+            {1, 1},
             type.width,
             type.signedness
         };
@@ -377,7 +387,23 @@ public:
 
         p.primitive_type = component_type.primitive_type;
         p.width = component_type.width;
-        p.component_count = type.component_count;
+        p.component_count[0] = type.component_count;
+        p.component_count[1] = 1;
+
+        module_->primitive_types.emplace(type.result_id, std::move(p));
+    }
+
+    void operator()(const internal::MatrixType_& type) {
+        PrimitiveType p = {};
+
+        const auto& primitives = module_->primitive_types;
+        ASSERT(primitives.count(type.component_type_id));
+        const auto& vector_type = primitives.find(type.component_type_id)->second;
+
+        p.primitive_type = vector_type.primitive_type;
+        p.width = vector_type.width;
+        p.component_count[0] = vector_type.component_count[0];
+        p.component_count[1] = type.component_count;
 
         module_->primitive_types.emplace(type.result_id, std::move(p));
     }

@@ -10,7 +10,7 @@ namespace spirv {
 struct PrimitiveType
 {
     SpvOp primitive_type;
-    uint32_t component_count;
+    uint32_t component_count[2];
     std::optional<uint32_t> width;
     std::optional<uint32_t> signedness; // 0 unsigned, 1 signed; TODO
 };

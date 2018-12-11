@@ -39,7 +39,7 @@ VkShaderStageFlagBits GetShaderStageBit(SpvExecutionModel model)
 }
 
 uint32_t GetPrimitiveStride(const spirv::PrimitiveType& type) {
-    return type.width.value() * type.component_count / 8;
+    return type.width.value() * type.component_count[0] * type.component_count[1] / 8;
 }
 
 uint32_t GetPrimitiveStride(const spirv::SpirvReflections& reflections, const uint32_t& type_id) {
@@ -55,33 +55,32 @@ uint32_t GetStride(const spirv::SpirvReflections& reflections, const uint32_t& t
         return last.offset + GetStride(reflections, last.type_id);
     } else {
         auto pit = reflections.primitive_types.find(type_id);
-        if (pit == reflections.primitive_types.end())
-            return 64;
-        // ASSERT(pit != reflections.primitive_types.end());
+        ASSERT(pit != reflections.primitive_types.end());
         return GetPrimitiveStride(pit->second);
     }
 }
 
 VkFormat GetPrimitiveFormat(const spirv::PrimitiveType& type) {
+    ASSERT(type.component_count[1] == 1);
     switch (type.primitive_type) {
     case SpvOpTypeInt:
         switch (type.width.value()) {
         case 8:
-            switch (type.component_count) {
+            switch (type.component_count[0]) {
             case 1: return type.signedness ? VK_FORMAT_R8_SINT : VK_FORMAT_R8_UINT;
             case 2: return type.signedness ? VK_FORMAT_R8G8_SINT : VK_FORMAT_R8G8_UINT;
             case 3: return type.signedness ? VK_FORMAT_R8G8B8_SINT : VK_FORMAT_R8G8B8_UINT;
             case 4: return type.signedness ? VK_FORMAT_R8G8B8A8_SINT : VK_FORMAT_R8G8B8A8_UINT;
             }
         case 16:
-            switch (type.component_count) {
+            switch (type.component_count[0]) {
             case 1: return type.signedness ? VK_FORMAT_R16_SINT : VK_FORMAT_R16_UINT;
             case 2: return type.signedness ? VK_FORMAT_R16G16_SINT : VK_FORMAT_R16G16_UINT;
             case 3: return type.signedness ? VK_FORMAT_R16G16B16_SINT : VK_FORMAT_R16G16B16_UINT;
             case 4: return type.signedness ? VK_FORMAT_R16G16B16A16_SINT : VK_FORMAT_R16G16B16A16_UINT;
             }
         case 32:
-            switch (type.component_count) {
+            switch (type.component_count[0]) {
             case 1: return type.signedness ? VK_FORMAT_R32_SINT : VK_FORMAT_R32_UINT;
             case 2: return type.signedness ? VK_FORMAT_R32G32_SINT : VK_FORMAT_R32G32_UINT;
             case 3: return type.signedness ? VK_FORMAT_R32G32B32_SINT : VK_FORMAT_R32G32B32_UINT;
@@ -91,14 +90,14 @@ VkFormat GetPrimitiveFormat(const spirv::PrimitiveType& type) {
     case SpvOpTypeFloat:
         switch (type.width.value()) {
         case 16:
-            switch (type.component_count) {
+            switch (type.component_count[0]) {
             case 1: return VK_FORMAT_R16_SFLOAT;
             case 2: return VK_FORMAT_R16G16_SFLOAT;
             case 3: return VK_FORMAT_R16G16B16_SFLOAT;
             case 4: return VK_FORMAT_R16G16B16A16_SFLOAT;
             }
         case 32:
-            switch (type.component_count) {
+            switch (type.component_count[0]) {
             case 1: return VK_FORMAT_R32_SFLOAT;
             case 2: return VK_FORMAT_R32G32_SFLOAT;
             case 3: return VK_FORMAT_R32G32B32_SFLOAT;
