@@ -453,23 +453,25 @@ VkQueryPool CreateQueryPool(VkDevice device, VkQueryType type, uint32_t count,
 }
 
 // Create on indirect command for each mesh in the scene
-std::vector<VkDrawIndexedIndirectCommand> CreateIndirectCommandBuffer(const Mesh& mesh) {
+std::vector<VkDrawIndexedIndirectCommand> CreateIndirectCommandBuffer(const Mesh& mesh,
+                                                                      const std::vector<MeshDraw>& draws) {
     std::vector<VkDrawIndexedIndirectCommand> commands;
+    for (size_t i = 0; i < draws.size(); i++) {
+        for (size_t k = 0; k < mesh.meshlet_instances.size(); k++) {
+            auto cone = mesh.meshlets[k].cone;
+            auto cosangle = glm::dot(glm::vec3(cone[0], cone[1], cone[2]), glm::vec3(0, 0, 1));
+            if (cone[3] < cosangle)
+                continue;
 
-    for (size_t i = 0; i < mesh.meshlet_instances.size(); i++)
-    {
-        auto cone = mesh.meshlets[i].cone;
-        auto cosangle = glm::dot(glm::vec3(cone[0], cone[1], cone[2]), glm::vec3(0, 0, 1));
-        if (cone[3] < cosangle)
-            continue;
-
-        VkDrawIndexedIndirectCommand indirectCmd {};
-        indirectCmd.instanceCount = 1;
-        indirectCmd.firstInstance = uint32_t(i);
-        indirectCmd.firstIndex = mesh.meshlet_instances[i].first;
-        indirectCmd.indexCount = mesh.meshlet_instances[i].second;
-        
-        commands.push_back(indirectCmd);
+            VkDrawIndexedIndirectCommand indirectCmd {};
+            indirectCmd.instanceCount = 1;
+            indirectCmd.firstInstance = i;
+            indirectCmd.firstIndex = mesh.meshlet_instances[k].first;
+            indirectCmd.indexCount = mesh.meshlet_instances[k].second;
+            indirectCmd.vertexOffset = 0;
+            
+            commands.push_back(indirectCmd);
+        }
     }
     return std::move(commands);
 }
@@ -477,7 +479,7 @@ std::vector<VkDrawIndexedIndirectCommand> CreateIndirectCommandBuffer(const Mesh
 /*
  *  @param[in] key The [keyboard key](@ref keys) that was pressed or released.
  *  @param[in] scancode The system-specific scancode of the key.
- *  @param[in] action `GLFW_PRESS`, `GLFW_RELEASE` or `GLFW_REPEAT`.
+ *  @param[in] action 'GLFW_PRESS', 'GLFW_RELEASE' or 'GLFW_REPEAT'.
  *  @param[in] mods Bit field describing which [modifier keys](@ref mods) were GLFWkeyfun
  */
 static void KeyboardCallback(GLFWwindow* windows, int key, int scancode, int action, int mods) {
@@ -617,9 +619,6 @@ int main() {
     mesh.meshlets = BuildMeshlets(mesh);
     BuildMeshletIndices(&mesh);
 
-    std::vector<VkDrawIndexedIndirectCommand> indirects = CreateIndirectCommandBuffer(mesh);
-    uint32_t indirect_draw_count = static_cast<uint32_t>(indirects.size());
-
     VkMemoryPropertyFlags device_local_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     VkMemoryPropertyFlags host_memory_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
                                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT; 
@@ -627,13 +626,12 @@ int main() {
     const VkDeviceSize vb_size = sizeof(Vertex)*mesh.vertices.size();
     const VkDeviceSize ib_size = sizeof(uint32_t)*mesh.indices.size();
     const VkDeviceSize mib_size = mesh.meshlet_indices.size() * sizeof(uint32_t);
-    const VkDeviceSize idcb_size = indirects.size() * sizeof(VkDrawIndexedIndirectCommand);
 
     Buffer staging = CreateBuffer(device, physical_properties.memory, { 
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host_memory_flags, 1024*1024*64});
 
     Buffer vb = CreateBuffer(device, physical_properties.memory, {
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, vb_size });
 
     Buffer ib = CreateBuffer(device, physical_properties.memory, {
@@ -644,15 +642,9 @@ int main() {
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, mib_size });
 
-    // muliple indirect draw buffer for drawing culled meshlet cluster
-    Buffer idcb = CreateBuffer(device, physical_properties.memory, {
-        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        device_local_flags, idcb_size });
-
     UploadBuffer(device, command_pool, command_queue, staging, vb, vb_size, mesh.vertices.data());
     UploadBuffer(device, command_pool, command_queue, staging, ib, ib_size, mesh.indices.data());
     UploadBuffer(device, command_pool, command_queue, staging, mib, mib_size, mesh.meshlet_indices.data());
-    UploadBuffer(device, command_pool, command_queue, staging, idcb, idcb_size, indirects.data());
 
     VkQueryPool timestamp_pool = CreateQueryPool(device, VK_QUERY_TYPE_TIMESTAMP, 1024, 0);
 
@@ -669,7 +661,28 @@ int main() {
         draws[i].position[2] = urd(eng) * 20.f - 10.f;
         draws[i].scale = urd(eng) + 0.5f;
         draws[i].orientation = glm::rotate(glm::quat(1, 0, 0, 0), angle, axis); 
+        draws[i].indirect_command = {};
+        draws[i].indirect_command.indexCount = static_cast<uint32_t>(mesh.indices.size());
+        draws[i].indirect_command.instanceCount = 1;
+        draws[i].indirect_command.firstInstance = i;
     }
+
+    VkDeviceSize mdb_size = sizeof(MeshDraw) * draws.size();
+    Buffer mdb = CreateBuffer(device, physical_properties.memory, {
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        device_local_flags, mib_size });
+    UploadBuffer(device, command_pool, command_queue, staging, mdb, mdb_size, draws.data());
+
+    std::vector<VkDrawIndexedIndirectCommand> indirects = CreateIndirectCommandBuffer(mesh, draws);
+    const uint32_t indirect_draw_count = static_cast<uint32_t>(indirects.size());
+    const VkDeviceSize idcb_size = indirects.size() * sizeof(VkDrawIndexedIndirectCommand);
+
+    // muliple indirect draw buffer for drawing culled meshlet cluster
+    Buffer idcb = CreateBuffer(device, physical_properties.memory, {
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        device_local_flags, idcb_size });
+
+    UploadBuffer(device, command_pool, command_queue, staging, idcb, idcb_size, indirects.data());
 
     double cpu_average = 0.0, gpu_average = 0.0, wait_average = 0.0;
 
@@ -762,7 +775,7 @@ int main() {
         vkCmdSetViewport(command_buffer, 0, 1, &viewport);
         vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
-        PushDescriptorSets descriptors[] = { vb };
+        PushDescriptorSets descriptors[] = { vb, mdb };
         vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, program.update, program.layout, 0, &descriptors);
 
         if (cluster_culling)
@@ -771,17 +784,15 @@ int main() {
             vkCmdBindIndexBuffer(command_buffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 
         float aspect = static_cast<float>(swapchain.extent.width) / swapchain.extent.height;
-        glm::mat4x4 project = PerspectiveProjection(glm::radians(70.f), aspect, 0.01f);
-        for (auto& draw : draws)
-            draw.project = project;
+        const PushConstant constant = { PerspectiveProjection(glm::radians(70.f), aspect, 0.01f) };
 
-        for (auto draw : draws) {
-            vkCmdPushConstants(command_buffer, program.layout, program.push_constant_stages, 0, sizeof(draw), &draw);
-            if (cluster_culling)
-                vkCmdDrawIndexedIndirect(command_buffer, idcb.buffer, 0, indirect_draw_count, sizeof(VkDrawIndexedIndirectCommand));
-            else
-                vkCmdDrawIndexed(command_buffer, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
-        }
+        vkCmdPushConstants(command_buffer, program.layout, program.push_constant_stages, 0, sizeof(constant), &constant);
+        if (cluster_culling)
+            vkCmdDrawIndexedIndirect(command_buffer, idcb.buffer, 0, indirect_draw_count, sizeof(VkDrawIndexedIndirectCommand));
+        else
+            vkCmdDrawIndexedIndirect(command_buffer, mdb.buffer, offsetof(MeshDraw, indirect_command), 
+                                     static_cast<uint32_t>(draws.size()), sizeof(MeshDraw));
+
         vkCmdEndRenderPass(command_buffer);
 
         VkImageMemoryBarrier copyBarriers[] = {
@@ -888,6 +899,7 @@ int main() {
     DestroyBuffer(device, &vb);
     DestroyBuffer(device, &ib);
     DestroyBuffer(device, &mib);
+    DestroyBuffer(device, &mdb);
     DestroyBuffer(device, &idcb);
 
     vkDestroyFramebuffer(device, framebuffer, nullptr);

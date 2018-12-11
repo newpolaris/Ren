@@ -55,7 +55,9 @@ uint32_t GetStride(const spirv::SpirvReflections& reflections, const uint32_t& t
         return last.offset + GetStride(reflections, last.type_id);
     } else {
         auto pit = reflections.primitive_types.find(type_id);
-        ASSERT(pit != reflections.primitive_types.end());
+        if (pit == reflections.primitive_types.end())
+            return 64;
+        // ASSERT(pit != reflections.primitive_types.end());
         return GetPrimitiveStride(pit->second);
     }
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <volk.h>
 #include <stdint.h>
 #include <vector>
 
@@ -8,12 +9,17 @@
 #include <glm/mat4x4.hpp>
 #include <glm/ext/quaternion_float.hpp>
 
-struct MeshDraw
+struct PushConstant
 {
     glm::mat4x4 project;
+};
+
+struct alignas(16) MeshDraw
+{
     glm::vec3 position;
-	float scale;
+    float scale;
     glm::quat orientation;
+    VkDrawIndexedIndirectCommand indirect_command;
 };
 
 struct alignas(16) Vertex
@@ -42,7 +48,7 @@ struct Mesh
     std::vector<Meshlet> meshlets;
     // meshlet indices for rendering mesh in standard vertex shader; just pre interpreted meshlet index look up
     std::vector<uint32_t> meshlet_indices;
-    // devide mehsletIndices per meshlet instance
+    // devide meshlet_indices per meshlet instance
     std::vector<std::pair<uint32_t, uint32_t>> meshlet_instances;
 };
 

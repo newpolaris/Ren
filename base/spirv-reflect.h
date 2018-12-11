@@ -31,6 +31,11 @@ struct StructType
     std::vector<MemberType> members;
 };
 
+struct MatrixType
+{
+    std::optional<std::string> name;
+};
+
 struct Variable
 {
     uint32_t type_id;
@@ -55,6 +60,7 @@ struct ModuleType
     std::vector<EntryPoint> entry_points;
     std::unordered_map<uint32_t, PrimitiveType> primitive_types;
     std::unordered_map<uint32_t, StructType> struct_types;
+    std::unordered_map<uint32_t, MatrixType> matrix_types;
     std::unordered_map<uint32_t, Variable> variables;
     std::unordered_map<SpvStorageClass, std::vector<uint32_t>> stroage_indices;
 };

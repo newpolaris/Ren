@@ -155,6 +155,11 @@ struct StructType_
     std::vector<word_t> member_ids;
 };
 
+struct MatrixType_
+{
+    word_t result_id;
+};
+
 using Name_ = std::string;
 using MemberName_ = std::unordered_map<word_t, std::string>;
 using PrimitiveType_ = std::variant<IntegerType_, FloatType_, VectorType_>;
