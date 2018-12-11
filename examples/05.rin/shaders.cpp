@@ -243,8 +243,10 @@ std::vector<PushDescriptorBinding> GetPushDesciptorBindingStages(ShaderModules s
 
 PushDescriptorSets::PushDescriptorSets(const Buffer& buffer) {
     buffer_.buffer = buffer.buffer;
-    buffer_.offset = 0;
-    buffer_.range = buffer.size;
+    buffer_.offset = 0; // TODO: offset
+    // TODO: requested vs allocated ?
+    buffer_.range = buffer.info.size; 
+    // buffer_.range = buffer.size;
 }
 
 ShaderModule CreateShaderModule(VkDevice device, const char* filepath) {

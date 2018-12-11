@@ -110,7 +110,7 @@ VkBufferMemoryBarrier CreateBufferBarrier(const Buffer& buffer, VkAccessFlags sr
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.buffer = buffer.buffer;
     barrier.offset = 0; // TODO:
-    barrier.size = buffer.info.size;
+    barrier.size = buffer.info.size; // requested size needed
 
     return barrier;
 }

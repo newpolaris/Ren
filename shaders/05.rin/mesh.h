@@ -24,5 +24,4 @@ struct MeshDrawCommand
     uint first_index;
     uint vertex_offset;
     uint first_instance;
-    uint pad[3];
 };

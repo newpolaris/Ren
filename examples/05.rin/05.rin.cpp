@@ -766,7 +766,7 @@ int main() {
             vkCmdPushConstants(command_buffer, drawcmd_program.layout, drawcmd_program.push_constant_stages, 0, sizeof(constant), &constant);
             vkCmdDispatch(command_buffer, uint32_t((draws.size() + 31) / 32), 1, 1);
 
-            // TODO: No validation error and any error;
+            // TODO: No validation error and no exception in vulkan; Not needed?
             VkBufferMemoryBarrier command_end = CreateBufferBarrier(mdcb, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
 			vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, 0, 1, &command_end, 0, 0);
         }

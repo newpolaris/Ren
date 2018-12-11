@@ -28,7 +28,7 @@ struct alignas(16) Vertex
     uint16_t tu, tv;
 };
 
-struct alignas(16) MeshDrawCommand {
+struct MeshDrawCommand {
     uint32_t index_count;
     uint32_t instance_count;
     uint32_t first_index;
