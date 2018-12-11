@@ -19,6 +19,7 @@ struct alignas(16) MeshDraw
     glm::vec3 position;
     float scale;
     glm::quat orientation;
+    uint32_t index_count;
 };
 
 struct alignas(16) Vertex

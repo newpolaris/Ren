@@ -14,6 +14,7 @@ struct MeshDraw
     vec3 position;
     float scale;
     vec4 orientation;
+    uint index_count;
 };
 
 // Aka. VkDrawIndexedIndirectCommand

@@ -24,9 +24,8 @@ void main() {
 	uint ti = gl_LocalInvocationID.x; // SV_GroupThreadID
     uint gi = gl_WorkGroupID.x; // SV_GroupID	
     uint dti = gl_GlobalInvocationID.x; // SV_DispatchThreadID
-    dti = 32*gi + ti;
 
-    commands[dti].index_count = 86832;
+    commands[dti].index_count = mesh_draws[dti].index_count;
     commands[dti].instance_count = 1;
     commands[dti].first_index = 0;
     commands[dti].vertex_offset = 0;

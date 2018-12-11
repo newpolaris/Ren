@@ -25,7 +25,6 @@ vec3 rotate_position(vec4 quat, vec3 v) {
  }
 
 void main() {
-    // MeshDraw draws = mesh_draws[gl_DrawIDARB];
     MeshDraw draws = mesh_draws[gl_InstanceIndex];
 
     // To handle "Capability Int8 is not allowed by Vulkan 1.1 specification (or requires extension) OpCapability Int8"

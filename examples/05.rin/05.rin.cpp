@@ -666,15 +666,18 @@ int main() {
         draws[i].position[2] = urd(eng) * 20.f - 10.f;
         draws[i].scale = urd(eng) + 0.5f;
         draws[i].orientation = glm::rotate(glm::quat(1, 0, 0, 0), angle, axis); 
+        draws[i].index_count = static_cast<uint32_t>(mesh.indices.size());
     }
 
-    VkDeviceSize mdb_size = sizeof(MeshDraw) * draws.size();
+    // meshdarw buffer
+    const VkDeviceSize mdb_size = sizeof(MeshDraw) * draws.size();
     Buffer mdb = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, mdb_size });
     UploadBuffer(device, command_pool, command_queue, staging, mdb, mdb_size, draws.data());
 
-    VkDeviceSize mdcb_size = sizeof(MeshDrawCommand) * draws.size();
+    // meshdraw-command buffer
+    const VkDeviceSize mdcb_size = 1024*1024*128;
     Buffer mdcb = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, mdcb_size });
