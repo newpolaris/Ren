@@ -39,9 +39,9 @@ struct Meshlet
 {
     vec3 center;
     float radius;
-    float cone[4];
+    int8_t cone[4];
     uint32_t vertices[kMeshVertices]; // save reference index of global vertex index
-    uint8_t indices[kMeshTriangles * 3];
+    uint8_t indices[kMeshTriangles*3];
     uint8_t vertex_count;
     uint8_t triangle_count;
 };
@@ -50,9 +50,9 @@ struct alignas(16) MeshletDraw
 {
     vec3 center;
     float radius;
-    float cone[4];
     uint32_t index_offset; // meshlet index's
     uint32_t index_count;
+    int8_t cone[4];
 };
 
 struct Mesh

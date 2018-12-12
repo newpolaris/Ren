@@ -364,12 +364,12 @@ int main() {
         MeshletDraw draws = {};
         draws.center = mesh.meshlets[i].center;
         draws.radius = mesh.meshlets[i].radius;
+        draws.index_offset = mesh.meshlet_instances[i].first;
+        draws.index_count = mesh.meshlet_instances[i].second;
         draws.cone[0] = mesh.meshlets[i].cone[0];
         draws.cone[1] = mesh.meshlets[i].cone[1];
         draws.cone[2] = mesh.meshlets[i].cone[2];
         draws.cone[3] = mesh.meshlets[i].cone[3];
-        draws.index_offset = mesh.meshlet_instances[i].first;
-        draws.index_count = mesh.meshlet_instances[i].second;
         meshletdraws.emplace_back(std::move(draws));
     }
 
@@ -381,7 +381,7 @@ int main() {
 
     const VkDeviceSize meshdrawcommandbuffer_size = 1024*1024*128;
     Buffer meshdraw_command_buffer = CreateBuffer(device, physical_properties.memory, {
-        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         device_local_flags, meshdrawcommandbuffer_size });
 
     Buffer draw_count_buffer = CreateBuffer(device, physical_properties.memory, {

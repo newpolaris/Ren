@@ -24,8 +24,22 @@ layout(binding = 2) writeonly buffer DrawCommandCount {
 };
 
 layout(binding = 3) readonly buffer MeshletDraws {
-    MeshletDraw meshlet_draws[];
+    MeshletDraw meshlets[];
 };
+
+bool ConeCull(vec4 cone, vec3 view) {
+    return dot(cone.xyz, view) > cone.w;
+}
+
+vec3 RotateQuat(vec3 v, vec4 q)
+{
+   return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
+}
+
+bool ConeCull(vec3 center, float radius, vec3 cone_axis, float cone_cutoff, vec3 camera_position)
+{
+    return dot(center - camera_position, cone_axis) > cone_cutoff * length(center - camera_position) + radius;
+}
 
 void main() {
     uint ti = gl_LocalInvocationID.x; // SV_GroupThreadID
@@ -49,14 +63,32 @@ void main() {
     uint meshlet_offset = draw.meshlet_offset;
     uint meshlet_count = draw.meshlet_count;
 
-    uint base = atomicAdd(draw_command_count, meshlet_count);
-
+    uint visible_cnt = 0;
+    const uint max_meshlet_cnt = 1000;
+    uint visible[max_meshlet_cnt];
     for (uint i = 0; i < meshlet_count; i++) {
+        uint mi = meshlet_offset + i;
+
+        vec3 center = RotateQuat(meshlets[mi].center, draw.orientation) * draw.scale + draw.position;
+        float radius = meshlets[mi].radius * draw.scale;
+
+        vec4 cone = vec4(ivec4(meshlets[mi].cone)) / 127.0;
+        vec3 cone_axis = RotateQuat(cone.xyz, draw.orientation);
+        float cone_cutoff = cone.w;
+
+        if (ConeCull(center, radius, cone_axis, cone_cutoff, vec3(0, 0, 0))) continue;
+        visible[visible_cnt++] = i;
+    }
+
+    uint base = atomicAdd(draw_command_count, visible_cnt);
+
+    for (uint i = 0; i < visible_cnt; i++) {
+        uint k = visible[i];
         uint offset = base + i;  
-        MeshletDraw meshlet_draw = meshlet_draws[meshlet_offset + i];
-        commands[offset].index_count = meshlet_draw.index_count;
+        uint mi = meshlet_offset + k;
+        commands[offset].index_count = meshlets[mi].index_count;
         commands[offset].instance_count = 1;
-        commands[offset].first_index = meshlet_draw.index_offset;
+        commands[offset].first_index = meshlets[mi].index_offset;
         commands[offset].vertex_offset = 0;
         commands[offset].first_instance = dti;
     }

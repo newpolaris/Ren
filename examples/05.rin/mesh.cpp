@@ -77,8 +77,8 @@ Mesh LoadMesh(const std::string& filename)
 }
 
 std::vector<Meshlet> BuildMeshlets(const Mesh& mesh) {
-    size_t max_vertices = 64;
-    size_t max_triangles = 126;
+    size_t max_vertices = kMeshVertices;
+    size_t max_triangles = kMeshTriangles;
 
     auto meshlets = std::vector<meshopt_Meshlet>(
                             meshopt_buildMeshletsBound(mesh.indices.size(), max_vertices, max_triangles));
@@ -104,10 +104,10 @@ std::vector<Meshlet> BuildMeshlets(const Mesh& mesh) {
         m.center = glm::vec3(bounds.center[0], bounds.center[1], bounds.center[2]);
         m.radius = bounds.radius;
 
-        m.cone[0] = bounds.cone_axis[0];
-        m.cone[1] = bounds.cone_axis[1];
-        m.cone[2] = bounds.cone_axis[2];
-        m.cone[3] = bounds.cone_cutoff;
+        m.cone[0] = bounds.cone_axis_s8[0];
+        m.cone[1] = bounds.cone_axis_s8[1];
+        m.cone[2] = bounds.cone_axis_s8[2];
+        m.cone[3] = bounds.cone_cutoff_s8;
 
         meshlet_result.push_back(m);
     }
@@ -127,12 +127,4 @@ void BuildMeshletIndices(Mesh* mesh) {
         mesh->meshlet_instances.push_back({start, cnt - start});
     }
     mesh->meshlet_indices = meshlet_indices;
-
-#if _DEBUG
-    size_t culled = 0;
-    for (const Meshlet& meshlet : mesh->meshlets)
-        if (meshlet.cone[2] > meshlet.cone[3])
-            culled++;
-    printf("Culled meshlets: %d/%d\n", int(culled), int(mesh->meshlets.size()));
-#endif
 }
