@@ -1,13 +1,7 @@
 // build vulkan renderer from scratch
 
-#if WIN32
-#include <windows.h>
-#define GLFW_EXPOSE_NATIVE_WIN32
-#endif
-
 #include <volk/volk.h>
 #include <glfw/glfw3.h>
-#include <glfw/glfw3native.h>
 #include <vulkan/vulkan.h>
 #include <cassert>
 #include <cstdlib>
@@ -30,8 +24,6 @@
 #include "swapchain.h"
 #include "math.h"
 #include "bits.h"
-
-#define SUPPORT_MULTIFRAME_IN_FLIGHT 0
 
 namespace {
     bool cluster_culling = true;
@@ -319,20 +311,14 @@ int main() {
 
     std::vector<VkCommandBuffer> command_buffers = CreateCommandBuffer(device, command_pool, chains);
 
-    enum { kMaxFramesInFight = 2 };
-
     // cpu-gpu synchronize
-    std::vector<VkFence> fences = CreateFence(device, VK_FENCE_CREATE_SIGNALED_BIT, kMaxFramesInFight);
+    VkFence fence = CreateFence(device, VK_FENCE_CREATE_SIGNALED_BIT);
 
     // gpu-gpu synchronize
-    std::vector<VkSemaphore> semaphores = CreateSemaphore(device, 0, kMaxFramesInFight);
-    std::vector<VkSemaphore> signal_semaphores = CreateSemaphore(device, 0, kMaxFramesInFight);
+    VkSemaphore semaphore = CreateSemaphore(device, 0);
+    VkSemaphore signal_semaphore = CreateSemaphore(device, 0);
 
-#if _DEBUG
     const char* objfile = "models/kitten.obj";
-#else
-    const char* objfile = "models/buddha.obj";
-#endif
 
     Mesh mesh = LoadMesh(objfile);
     mesh.meshlets = BuildMeshlets(mesh);
@@ -435,24 +421,14 @@ int main() {
 
     double cpu_average = 0.0, gpu_average = 0.0, wait_average = 0.0;
 
-    size_t current_frame = 0;
-
     Image color = {};
     Image depth = {};
     VkFramebuffer framebuffer = VK_NULL_HANDLE;
 
     while(!glfwWindowShouldClose(windows)) {
         glfwPollEvents();
-        // KeyboardUpdate(windows);
-
-        auto fence = fences[current_frame];
-    #if SUPPORT_MULTIFRAME_IN_FLIGHT
-        VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
-    #endif
 
         auto cpu_begin = std::chrono::steady_clock::now(); 
-        auto semaphore = semaphores[current_frame];
-        auto signal_semaphore = signal_semaphores[current_frame];
 
         uint32_t image_index = 0;
         VkResult result = VK_ERROR_OUT_OF_DATE_KHR;
@@ -496,7 +472,7 @@ int main() {
         VkCommandBufferBeginInfo begininfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
         VK_ASSERT(vkBeginCommandBuffer(command_buffer, &begininfo));
 
-        vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, current_frame*2);
+        vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 0);
 
         uint32_t indirect_command_count = draw_count;
         if (cluster_culling)
@@ -515,6 +491,8 @@ int main() {
             culling_data.frustums[i] = frustums[i];
 
         {
+            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 2);
+
             const auto& culling_pipeline = cluster_culling ? drawclustercmd_pipeline : drawcmd_pipeline;
             const auto& culling_program = cluster_culling ? drawclustercmd_program : drawcmd_program;
 
@@ -550,6 +528,7 @@ int main() {
                 VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                 VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr,
                 ARRAY_SIZE(render_begin), render_begin);
+            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 3);
         }
 
         VkClearColorValue clear_color = { std::sin(static_cast<float>(glfwGetTime()))*0.5f + 0.5f, 0.5f, 0.5f, 1.0f };
@@ -611,7 +590,7 @@ int main() {
         vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
                              VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, 1, &present);
 
-        vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, current_frame*2+1);
+        vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 1);
 
         VK_ASSERT(vkEndCommandBuffer(command_buffer));
 
@@ -638,26 +617,21 @@ int main() {
 
         auto cpu_end = std::chrono::steady_clock::now(); 
 
-    #if SUPPORT_MULTIFRAME_IN_FLIGHT
-        auto next_frame = ((current_frame + 1) % kMaxFramesInFight);
-    #else
-        auto next_frame = current_frame;
-    #endif
-
         // 'VK_QUERY_RESULT_WAIT_BIT' seems not working
         auto wait_begin = std::chrono::steady_clock::now();
         // wait until query result get
-        VK_ASSERT(vkWaitForFences(device, 1, &fences[next_frame], TRUE, ~0ull));
+        VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
         auto wait_end = std::chrono::steady_clock::now();
 
-        uint64_t timestamps[2] = {};
-        vkGetQueryPoolResults(device, timestamp_pool, next_frame*2, 2, sizeof(timestamps), timestamps,
+        uint64_t timestamps[4] = {};
+        vkGetQueryPoolResults(device, timestamp_pool, 0, ARRAY_SIZE(timestamps), sizeof(timestamps), timestamps,
                               sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
 
         auto wait_time = std::chrono::duration<double, std::milli>(wait_end - wait_begin).count();
         auto cpu_time = std::chrono::duration<double, std::milli>(cpu_end - cpu_begin).count();
         auto gpu_scaler = physical_properties.properties.limits.timestampPeriod;
         auto gpu_time = static_cast<double>((timestamps[1] - timestamps[0]) * 1e-6) * gpu_scaler;
+        auto cull_time = static_cast<double>((timestamps[3] - timestamps[2]) * 1e-6) * gpu_scaler;
 
         gpu_average = glm::mix(gpu_average, gpu_time, 0.05);
         cpu_average = glm::mix(cpu_average, cpu_time, 0.05);
@@ -667,22 +641,16 @@ int main() {
 		auto trianglesPerSec = double(draw_count) * double(triangle_count) / double(gpu_average * 1e-3) * 1e-9;
 
         char title[256] = {};  
-        sprintf(title, "wait: %.2f ms; cpu: %.2f ms; gpu: %.2f ms; triangles %d; meshlets %d; %.1fB tri/sec",
-                wait_average, cpu_average, gpu_average, triangle_count, 1, trianglesPerSec);
+        sprintf(title, "wait: %.2f ms; cpu: %.2f ms; gpu: %.2f ms (cull %.2f ms); triangles %d; meshlets %d; %.1fB tri/sec clustercull %s",
+                wait_average, cpu_average, gpu_average, cull_time, triangle_count, 1, trianglesPerSec,
+                cluster_culling ? "ON" : "OFF");
         glfwSetWindowTitle(windows, title);
-
-    #if SUPPORT_MULTIFRAME_IN_FLIGHT
-        current_frame = (current_frame + 1) % kMaxFramesInFight;
-    #endif
     }
 
     VK_ASSERT(vkDeviceWaitIdle(device));
-    for (auto fence : fences)
-        vkDestroyFence(device, fence, nullptr);
-    for (auto semaphore : semaphores)
-        vkDestroySemaphore(device, semaphore, nullptr);
-    for (auto semaphore : signal_semaphores)
-        vkDestroySemaphore(device, semaphore, nullptr);
+    vkDestroyFence(device, fence, nullptr);
+    vkDestroySemaphore(device, semaphore, nullptr);
+    vkDestroySemaphore(device, signal_semaphore, nullptr);
 
     DestroyBuffer(device, &staging);
     DestroyBuffer(device, &vb);
