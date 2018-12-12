@@ -23,6 +23,10 @@ layout(binding = 2) writeonly buffer DrawCommandCount {
 	uint draw_command_count;
 };
 
+layout(binding = 3) readonly buffer MeshletDraws {
+    MeshletDraw meshlet_draws[];
+};
+
 void main() {
     uint ti = gl_LocalInvocationID.x; // SV_GroupThreadID
     uint gi = gl_WorkGroupID.x; // SV_GroupID	
@@ -42,11 +46,18 @@ void main() {
     if (cull)
         return;
 
-    uint index = atomicAdd(draw_command_count, 1);
+    uint meshlet_offset = draw.meshlet_offset;
+    uint meshlet_count = draw.meshlet_count;
 
-    commands[index].index_count = mesh_draws[dti].index_count;
-    commands[index].instance_count = 1;
-    commands[index].first_index = 0;
-    commands[index].vertex_offset = 0;
-    commands[index].first_instance = dti;
+    uint base = atomicAdd(draw_command_count, meshlet_count);
+
+    for (uint i = 0; i < meshlet_count; i++) {
+        uint offset = base + i;  
+        MeshletDraw meshlet_draw = meshlet_draws[meshlet_offset + i];
+        commands[offset].index_count = meshlet_draw.index_count;
+        commands[offset].instance_count = 1;
+        commands[offset].first_index = meshlet_draw.index_offset;
+        commands[offset].vertex_offset = 0;
+        commands[offset].first_instance = dti;
+    }
 }

@@ -17,6 +17,19 @@ struct MeshDraw
     vec3 center;
     float radius;
     uint index_count;
+    uint meshlet_offset;
+    uint meshlet_count;
+    uint pad;
+};
+
+struct MeshletDraw
+{
+    vec3 center;
+    float radius;
+    float cone[4];
+    uint index_offset;
+    uint index_count;
+    uint pad[2];
 };
 
 // Aka. VkDrawIndexedIndirectCommand

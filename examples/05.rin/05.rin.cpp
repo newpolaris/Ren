@@ -296,6 +296,10 @@ int main() {
     Program drawcmd_program = CreateProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, {drawcmd_shader});
     VkPipeline drawcmd_pipeline = CreateComputePipeline(device, drawcmd_program.layout, drawcmd_shader);
 
+    ShaderModule drawclustercmd_shader  = CreateShaderModule(device, "shaders/05.rin/drawcmd.cluster.comp.spv");
+    Program drawclustercmd_program = CreateProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, {drawclustercmd_shader});
+    VkPipeline drawclustercmd_pipeline = CreateComputePipeline(device, drawclustercmd_program.layout, drawclustercmd_shader);
+
     ShaderModule vertex_shader = CreateShaderModule(device, "shaders/05.rin/base.vert.spv");
     ShaderModule fragment_shader = CreateShaderModule(device, "shaders/05.rin/base.frag.spv");
     ShaderModules shaders = { vertex_shader, fragment_shader };
@@ -379,16 +383,36 @@ int main() {
         draws[i].index_count = static_cast<uint32_t>(mesh.indices.size());
         draws[i].center = mesh.center;
         draws[i].radius = mesh.radius;
+        draws[i].meshlet_offset = 0;
+        draws[i].meshlet_count = static_cast<uint32_t>(mesh.meshlets.size());
     }
 
-    // meshdarw buffer
     const VkDeviceSize meshdrawbuffer_size = sizeof(MeshDraw) * draws.size();
     Buffer meshdraw_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, meshdrawbuffer_size });
     UploadBuffer(device, command_pool, command_queue, staging, meshdraw_buffer, meshdrawbuffer_size, draws.data());
 
-    // meshdraw-command buffer
+    std::vector<MeshletDraw> meshletdraws;
+    for (size_t i = 0; i < mesh.meshlets.size(); i++) {
+        MeshletDraw draws = {};
+        draws.center = mesh.meshlets[i].center;
+        draws.radius = mesh.meshlets[i].radius;
+        draws.cone[0] = mesh.meshlets[i].cone[0];
+        draws.cone[1] = mesh.meshlets[i].cone[1];
+        draws.cone[2] = mesh.meshlets[i].cone[2];
+        draws.cone[3] = mesh.meshlets[i].cone[3];
+        draws.index_offset = mesh.meshlet_instances[i].first;
+        draws.index_count = mesh.meshlet_instances[i].second;
+        meshletdraws.emplace_back(std::move(draws));
+    }
+
+    const VkDeviceSize meshletdrawbuffer_size = sizeof(MeshletDraw) * meshletdraws.size();
+    Buffer meshletdraw_buffer = CreateBuffer(device, physical_properties.memory, {
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        device_local_flags, meshletdrawbuffer_size });
+    UploadBuffer(device, command_pool, command_queue, staging, meshletdraw_buffer, meshletdrawbuffer_size, meshletdraws.data());
+
     const VkDeviceSize meshdrawcommandbuffer_size = 1024*1024*128;
     Buffer meshdraw_command_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -490,21 +514,23 @@ int main() {
         for (uint32_t i = 0; i < 6; i++)
             culling_data.frustums[i] = frustums[i];
 
-        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmd_pipeline);
-        if (!cluster_culling)
         {
+            const auto& culling_pipeline = cluster_culling ? drawclustercmd_pipeline : drawcmd_pipeline;
+            const auto& culling_program = cluster_culling ? drawclustercmd_program : drawcmd_program;
+
+            vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, culling_pipeline);
             vkCmdFillBuffer(command_buffer, draw_count_buffer.buffer, 0, 4, 0);
 
             auto fill_barrier = CreateBufferBarrier(draw_count_buffer, VK_ACCESS_TRANSFER_WRITE_BIT,
-                                                    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-            vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, 
-                                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0, 1, &fill_barrier, 0, 0);
+                VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+            vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0, 1, &fill_barrier, 0, 0);
 
-            // input, output, output
-            PushDescriptorSets descriptors[] = { meshdraw_buffer, meshdraw_command_buffer, draw_count_buffer };
-            vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, drawcmd_program.update, drawcmd_program.layout, 0, &descriptors);
+            // input, output, output, input
+            PushDescriptorSets descriptors[] = { meshdraw_buffer, meshdraw_command_buffer, draw_count_buffer, meshletdraw_buffer };
+            vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, culling_program.update, culling_program.layout, 0, &descriptors);
 
-            vkCmdPushConstants(command_buffer, drawcmd_program.layout, drawcmd_program.push_constant_stages, 0, 
+            vkCmdPushConstants(command_buffer, culling_program.layout, culling_program.push_constant_stages, 0, 
                                sizeof(culling_data), &culling_data);
             vkCmdDispatch(command_buffer, uint32_t((draw_count + 31) / 32), 1, 1);
 
@@ -513,18 +539,18 @@ int main() {
                 CreateBufferBarrier(meshdraw_command_buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
                 CreateBufferBarrier(draw_count_buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
             };
-			vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+            vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
                                  0, 0, 0, ARRAY_SIZE(command_end), command_end, 0, 0);
-        }
 
-        VkImageMemoryBarrier render_begin[] = {
-            CreateImageBarrier(color.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT),
-            CreateImageBarrier(depth.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT),
-        };
-        vkCmdPipelineBarrier(command_buffer,
-            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr,
-            ARRAY_SIZE(render_begin), render_begin);
+            VkImageMemoryBarrier render_begin[] = {
+                CreateImageBarrier(color.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT),
+                CreateImageBarrier(depth.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT),
+            };
+            vkCmdPipelineBarrier(command_buffer,
+                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr,
+                ARRAY_SIZE(render_begin), render_begin);
+        }
 
         VkClearColorValue clear_color = { std::sin(static_cast<float>(glfwGetTime()))*0.5f + 0.5f, 0.5f, 0.5f, 1.0f };
         VkClearDepthStencilValue clear_depth = { 0.0f, 0 };
@@ -544,25 +570,17 @@ int main() {
         vkCmdSetViewport(command_buffer, 0, 1, &viewport);
         vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
-        if (cluster_culling) {
-            PushDescriptorSets descriptors[] = {vb, meshdraw_buffer, idcb};
-            vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, mesh_program.update, mesh_program.layout, 0, &descriptors);
-        } else {
-            PushDescriptorSets descriptors[] = {vb, meshdraw_buffer, meshdraw_command_buffer};
-            vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, mesh_program.update, mesh_program.layout, 0, &descriptors);
-        }
+        PushDescriptorSets descriptors[] = {vb, meshdraw_buffer, meshdraw_command_buffer};
+        vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, mesh_program.update, mesh_program.layout, 0, &descriptors);
 
         if (cluster_culling)
             vkCmdBindIndexBuffer(command_buffer, meshlet_index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-        else
+        else 
             vkCmdBindIndexBuffer(command_buffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 
         vkCmdPushConstants(command_buffer, mesh_program.layout, mesh_program.push_constant_stages, 0, sizeof(graphics_data), &graphics_data);
-        if (cluster_culling)
-            vkCmdDrawIndexedIndirect(command_buffer, idcb.buffer, 0, indirect_command_count, sizeof(VkDrawIndexedIndirectCommand));
-        else 
-            vkCmdDrawIndexedIndirectCountKHR(command_buffer, meshdraw_command_buffer.buffer, 0, draw_count_buffer.buffer, 0, 
-                                             indirect_command_count, sizeof(MeshDrawCommand));
+        vkCmdDrawIndexedIndirectCountKHR(command_buffer, meshdraw_command_buffer.buffer, 0, draw_count_buffer.buffer, 0,
+                                         indirect_command_count, sizeof(MeshDrawCommand));
 
         vkCmdEndRenderPass(command_buffer);
 
@@ -671,6 +689,7 @@ int main() {
     DestroyBuffer(device, &ib);
     DestroyBuffer(device, &meshlet_index_buffer);
     DestroyBuffer(device, &meshdraw_buffer);
+    DestroyBuffer(device, &meshletdraw_buffer);
     DestroyBuffer(device, &idcb);
     DestroyBuffer(device, &meshdraw_command_buffer);
     DestroyBuffer(device, &draw_count_buffer);
@@ -684,8 +703,11 @@ int main() {
 
     vkDestroyPipeline(device, drawcmd_pipeline, nullptr);
     DestroyProgram(device, &drawcmd_program);
-
     vkDestroyShaderModule(device, drawcmd_shader.module, nullptr);
+
+    vkDestroyPipeline(device, drawclustercmd_pipeline, nullptr);
+    DestroyProgram(device, &drawclustercmd_program);
+    vkDestroyShaderModule(device, drawclustercmd_shader.module, nullptr);
 
     vkDestroyPipeline(device, mesh_pipeline, nullptr);
     DestroyProgram(device, &mesh_program);
