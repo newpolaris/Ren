@@ -158,30 +158,6 @@ VkQueryPool CreateQueryPool(VkDevice device, VkQueryType type, uint32_t count,
     return pool;
 }
 
-// Create on indirect command for each mesh in the scene
-std::vector<VkDrawIndexedIndirectCommand> CreateIndirectCommandBuffer(const Mesh& mesh,
-                                                                      const std::vector<MeshDraw>& draws) {
-    std::vector<VkDrawIndexedIndirectCommand> commands;
-    for (size_t i = 0; i < draws.size(); i++) {
-        for (size_t k = 0; k < mesh.meshlet_instances.size(); k++) {
-            auto cone = mesh.meshlets[k].cone;
-            auto cosangle = glm::dot(vec3(cone[0], cone[1], cone[2]), vec3(0, 0, 1));
-            if (cone[3] < cosangle)
-                continue;
-
-            VkDrawIndexedIndirectCommand indirectCmd {};
-            indirectCmd.instanceCount = 1;
-            indirectCmd.firstInstance = i;
-            indirectCmd.firstIndex = mesh.meshlet_instances[k].first;
-            indirectCmd.indexCount = mesh.meshlet_instances[k].second;
-            indirectCmd.vertexOffset = 0;
-            
-            commands.push_back(indirectCmd);
-        }
-    }
-    return std::move(commands);
-}
-
 /*
  *  @param[in] key The [keyboard key](@ref keys) that was pressed or released.
  *  @param[in] scancode The system-specific scancode of the key.
@@ -318,7 +294,11 @@ int main() {
     VkSemaphore semaphore = CreateSemaphore(device, 0);
     VkSemaphore signal_semaphore = CreateSemaphore(device, 0);
 
+#if _DEBUG
     const char* objfile = "models/kitten.obj";
+#else
+    const char* objfile = "models/buddha.obj";
+#endif
 
     Mesh mesh = LoadMesh(objfile);
     mesh.meshlets = BuildMeshlets(mesh);
@@ -355,7 +335,7 @@ int main() {
 
     std::default_random_engine eng {10};
     std::uniform_real_distribution<float> urd(0, 1);
-    const uint32_t draw_count = 1000;
+    const uint32_t draw_count = 2000;
     std::vector<MeshDraw> draws(draw_count);
     for (uint32_t i = 0; i < draw_count; i++) {
         vec3 axis = vec3( urd(eng)*2 - 1, urd(eng)*2 - 1, urd(eng)*2 - 1);
@@ -407,17 +387,6 @@ int main() {
     Buffer draw_count_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, sizeof(uint32_t)});
-
-    std::vector<VkDrawIndexedIndirectCommand> indirects = CreateIndirectCommandBuffer(mesh, draws);
-    const uint32_t indirect_draw_count = static_cast<uint32_t>(indirects.size());
-    const VkDeviceSize idcb_size = indirects.size() * sizeof(VkDrawIndexedIndirectCommand);
-
-    // muliple indirect draw buffer for drawing culled meshlet cluster
-    Buffer idcb = CreateBuffer(device, physical_properties.memory, {
-        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        device_local_flags, idcb_size });
-
-    UploadBuffer(device, command_pool, command_queue, staging, idcb, idcb_size, indirects.data());
 
     double cpu_average = 0.0, gpu_average = 0.0, wait_average = 0.0;
 
@@ -474,16 +443,17 @@ int main() {
 
         vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 0);
 
-        uint32_t indirect_command_count = draw_count;
-        if (cluster_culling)
-            indirect_command_count = indirect_draw_count;
-
         float aspect = static_cast<float>(swapchain.extent.width) / swapchain.extent.height;
         const mat4x4 project = PerspectiveProjection(glm::radians(70.f), aspect, 0.01f);
 
         const GraphicsData graphics_data = { project };
         CullingData culling_data;
-        culling_data.draw_count = indirect_command_count;
+        culling_data.draw_count = draw_count;
+
+        // Over 1 million max-command-count (not; call count, parameter) cause crash.
+        // Maybe related with https://github.com/zeux/niagara
+        // "NVidia GTX 10xx series GPUs cause VK_ERROR_DEVICE_LOST when drawCount is 1'000'000"
+        const uint32_t max_command_count = 1'000'000;
 
         const float max_draw_distance = 200.f;
         const auto frustums = GetFrustum(project, max_draw_distance);
@@ -559,7 +529,7 @@ int main() {
 
         vkCmdPushConstants(command_buffer, mesh_program.layout, mesh_program.push_constant_stages, 0, sizeof(graphics_data), &graphics_data);
         vkCmdDrawIndexedIndirectCountKHR(command_buffer, meshdraw_command_buffer.buffer, 0, draw_count_buffer.buffer, 0,
-                                         indirect_command_count, sizeof(MeshDrawCommand));
+                                         max_command_count, sizeof(MeshDrawCommand));
 
         vkCmdEndRenderPass(command_buffer);
 
@@ -658,7 +628,6 @@ int main() {
     DestroyBuffer(device, &meshlet_index_buffer);
     DestroyBuffer(device, &meshdraw_buffer);
     DestroyBuffer(device, &meshletdraw_buffer);
-    DestroyBuffer(device, &idcb);
     DestroyBuffer(device, &meshdraw_command_buffer);
     DestroyBuffer(device, &draw_count_buffer);
 
