@@ -212,8 +212,8 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityF
 int main() {
     const char* application_name = "Hello Kitty";
     const char* engine_name = "Rin";
-    const int width = 1280;
-    const int height = 1024;
+    const int width = 1600;
+    const int height = 1200;
 
     if (glfwInit() != GLFW_TRUE)
         return EXIT_FAILURE;
