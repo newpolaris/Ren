@@ -14,6 +14,8 @@ struct alignas(16) MeshDraw
     glm::vec3 position;
     float scale;
     glm::quat orientation;
+    glm::vec3 center;
+    float radius;
     uint32_t index_count;
 };
 
@@ -37,6 +39,8 @@ enum { kMeshTriangles = 126 };
 
 struct Meshlet
 {
+    glm::vec3 center;
+    float radius;
     float cone[4];
     uint32_t vertices[kMeshVertices]; // save reference index of global vertex index
     uint8_t indices[kMeshTriangles * 3];
@@ -46,6 +50,8 @@ struct Meshlet
 
 struct Mesh
 {
+    glm::vec3 center;
+    float radius;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     std::vector<Meshlet> meshlets;

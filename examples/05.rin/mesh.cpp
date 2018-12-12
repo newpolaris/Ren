@@ -65,7 +65,15 @@ Mesh LoadMesh(const std::string& filename)
     meshopt_optimizeVertexFetch(vertices.data(), indices.data(), index_count, 
                                 vertices.data(), vertex_count, sizeof(Vertex));
 
-    return Mesh{std::move(vertices), std::move(indices)};
+    float radius = 0.f;
+    glm::vec3 center(0.f);
+    for (auto& v : vertices)
+        center += glm::vec3(v.x, v.y, v.z);
+    center /= static_cast<float>(vertices.size());
+    for (auto& v : vertices)
+        radius = glm::max(radius,  glm::distance(glm::vec3(v.x, v.y, v.z), center));
+
+    return Mesh { center, radius, vertices, indices };
 }
 
 std::vector<Meshlet> BuildMeshlets(const Mesh& mesh) {
@@ -92,6 +100,9 @@ std::vector<Meshlet> BuildMeshlets(const Mesh& mesh) {
 
         meshopt_Bounds bounds = meshopt_computeMeshletBounds(meshlet, &mesh.vertices[0].x, mesh.vertices.size(),
                                                              sizeof(Vertex));
+
+        m.center = glm::vec3(bounds.center[0], bounds.center[1], bounds.center[2]);
+        m.radius = bounds.radius;
 
         m.cone[0] = bounds.cone_axis[0];
         m.cone[1] = bounds.cone_axis[1];

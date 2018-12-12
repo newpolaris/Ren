@@ -42,6 +42,7 @@ struct alignas(16) GraphicsData {
 };
 
 struct alignas(16) CullingData {
+    glm::vec4 frustums[6];
     uint32_t draw_count;
 };
 
@@ -545,6 +546,12 @@ glm::mat4x4 PerspectiveProjection(float fovY, float aspect, float nearz) {
                            0.0f, 0.0f, nearz,  0.0f);
 }
 
+glm::vec4 NormalizePlane(const glm::vec4& plane) {
+    glm::vec3 normal = glm::vec3(plane);
+    float normalize_constat = glm::dot(normal, normal);
+    return plane * glm::inversesqrt(normalize_constat);
+}
+
 int main() {
     const char* application_name = "Hello Kitty";
     const char* engine_name = "Rin";
@@ -554,7 +561,6 @@ int main() {
     if (glfwInit() != GLFW_TRUE)
         return EXIT_FAILURE;
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-
     volkInitialize();
 
     VkInstance instance = CreateInstance(application_name, engine_name);
@@ -566,7 +572,8 @@ int main() {
     VkDebugUtilsMessengerEXT messenger = CreateDebugCallback(instance, DebugCallback);
 
     GLFWwindow* windows = glfwCreateWindow(width, height, application_name, nullptr, nullptr);
-    // glfwSetKeyCallback(windows, KeyboardCallback);
+    glfwSetKeyCallback(windows, KeyboardCallback);
+
     VkSurfaceKHR surface = CreateSurface(instance, windows);
 
     VkPhysicalDevice physical_device = CreatePhysicalDevice(instance);
@@ -681,6 +688,8 @@ int main() {
         draws[i].scale = urd(eng) + 0.5f;
         draws[i].orientation = glm::rotate(glm::quat(1, 0, 0, 0), angle, axis); 
         draws[i].index_count = static_cast<uint32_t>(mesh.indices.size());
+        draws[i].center = mesh.center;
+        draws[i].radius = mesh.radius;
     }
 
     // meshdarw buffer
@@ -721,7 +730,7 @@ int main() {
 
     while(!glfwWindowShouldClose(windows)) {
         glfwPollEvents();
-        KeyboardUpdate(windows);
+        // KeyboardUpdate(windows);
 
         auto fence = fences[current_frame];
     #if SUPPORT_MULTIFRAME_IN_FLIGHT
@@ -781,24 +790,38 @@ int main() {
             indirect_command_count = indirect_draw_count;
 
         float aspect = static_cast<float>(swapchain.extent.width) / swapchain.extent.height;
-        const GraphicsData graphics_data = { PerspectiveProjection(glm::radians(70.f), aspect, 0.01f) };
-        CullingData culling_data = { indirect_command_count };
-        if (cluster_culling)
-            culling_data.draw_count = draw_count;
+        const glm::mat4x4 project = PerspectiveProjection(glm::radians(70.f), aspect, 0.01f);
+
+        const GraphicsData graphics_data = { project };
+        CullingData culling_data;
+        culling_data.draw_count = indirect_command_count;
+
+        const uint32_t max_draw_distance = 200;
+        auto projectT = glm::transpose(project);
+        memset(culling_data.frustums, 0, sizeof(culling_data.frustums));
+        culling_data.frustums[0] = NormalizePlane(projectT[3] + projectT[0]); // x + w > 0
+        culling_data.frustums[1] = NormalizePlane(projectT[3] - projectT[0]); // x - w < 0
+        culling_data.frustums[2] = NormalizePlane(projectT[3] + projectT[1]); // y + w > 0
+        culling_data.frustums[3] = NormalizePlane(projectT[3] - projectT[1]); // y - w < 0
+        culling_data.frustums[4] = NormalizePlane(projectT[3] - projectT[2]); // z - w < 0
+        culling_data.frustums[5] = NormalizePlane(glm::vec4(0, 0, -1, max_draw_distance)); // infinite far plane
 
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmd_pipeline);
         if (!cluster_culling)
         {
             vkCmdFillBuffer(command_buffer, draw_count_buffer.buffer, 0, 4, 0);
 
-            VkBufferMemoryBarrier fill_barrier = CreateBufferBarrier(draw_count_buffer, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-            vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0, 1, &fill_barrier, 0, 0);
+            auto fill_barrier = CreateBufferBarrier(draw_count_buffer, VK_ACCESS_TRANSFER_WRITE_BIT,
+                                                    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+            vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, 
+                                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0, 1, &fill_barrier, 0, 0);
 
             // input, output, output
             PushDescriptorSets descriptors[] = { meshdraw_buffer, meshdraw_command_buffer, draw_count_buffer };
             vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, drawcmd_program.update, drawcmd_program.layout, 0, &descriptors);
 
-            vkCmdPushConstants(command_buffer, drawcmd_program.layout, drawcmd_program.push_constant_stages, 0, sizeof(culling_data), &culling_data);
+            vkCmdPushConstants(command_buffer, drawcmd_program.layout, drawcmd_program.push_constant_stages, 0, 
+                               sizeof(culling_data), &culling_data);
             vkCmdDispatch(command_buffer, uint32_t((draw_count + 31) / 32), 1, 1);
 
             // Without barrier, first attempt that change culling status will result empty screen in few frames;
@@ -806,7 +829,8 @@ int main() {
                 CreateBufferBarrier(meshdraw_command_buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
                 CreateBufferBarrier(draw_count_buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
             };
-			vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, 0, ARRAY_SIZE(command_end), command_end, 0, 0);
+			vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+                                 0, 0, 0, ARRAY_SIZE(command_end), command_end, 0, 0);
         }
 
         VkImageMemoryBarrier render_begin[] = {

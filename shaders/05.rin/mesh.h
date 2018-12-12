@@ -14,6 +14,8 @@ struct MeshDraw
     vec3 position;
     float scale;
     vec4 orientation;
+    vec3 center;
+    float radius;
     uint index_count;
 };
 
@@ -29,6 +31,7 @@ struct MeshDrawCommand
 
 struct CullingData
 {
+    vec4 frustum0, frustum1, frustum2, frustum3, frustum4, frustum5;
     uint draw_count;
-    uint pad, pad1, pad2;
+    uint pad0, pad1, pad2;
 };

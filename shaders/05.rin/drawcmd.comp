@@ -31,6 +31,21 @@ void main() {
     if (dti >= constant.draw_count)
         return;
 
+   MeshDraw draw = mesh_draws[dti];
+    vec3 center = draw.scale * draw.center + draw.position;
+    float radius = draw.scale * draw.radius;
+
+    bool cull = false;
+    cull = cull || (dot(constant.frustum0, vec4(center, 1.0)) <= -radius);
+    cull = cull || (dot(constant.frustum1, vec4(center, 1.0)) <= -radius);
+    cull = cull || (dot(constant.frustum2, vec4(center, 1.0)) <= -radius);
+    cull = cull || (dot(constant.frustum3, vec4(center, 1.0)) <= -radius);
+    cull = cull || (dot(constant.frustum4, vec4(center, 1.0)) <= -radius);
+    cull = cull || (dot(constant.frustum5, vec4(center, 1.0)) <= -radius);
+
+    if (cull)
+        return;
+
     uint index = atomicAdd(draw_command_count, 1);
 
     commands[index].index_count = mesh_draws[dti].index_count;
