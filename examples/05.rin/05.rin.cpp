@@ -369,7 +369,7 @@ int main() {
 
     std::default_random_engine eng {10};
     std::uniform_real_distribution<float> urd(0, 1);
-    const uint32_t draw_count = 2000;
+    const uint32_t draw_count = 1000;
     std::vector<MeshDraw> draws(draw_count);
     for (uint32_t i = 0; i < draw_count; i++) {
         vec3 axis = vec3( urd(eng)*2 - 1, urd(eng)*2 - 1, urd(eng)*2 - 1);
@@ -409,7 +409,7 @@ int main() {
 
     const VkDeviceSize meshletdrawbuffer_size = sizeof(MeshletDraw) * meshletdraws.size();
     Buffer meshletdraw_buffer = CreateBuffer(device, physical_properties.memory, {
-        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, meshletdrawbuffer_size });
     UploadBuffer(device, command_pool, command_queue, staging, meshletdraw_buffer, meshletdrawbuffer_size, meshletdraws.data());
 
