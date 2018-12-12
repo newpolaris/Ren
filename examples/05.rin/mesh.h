@@ -3,11 +3,7 @@
 #include <volk.h>
 #include <stdint.h>
 #include <vector>
-
-#include <glm/vec3.hpp>
-#include <glm/vec4.hpp>
-#include <glm/mat4x4.hpp>
-#include <glm/ext/quaternion_float.hpp>
+#include "math.h"
 
 struct alignas(16) MeshDraw
 {

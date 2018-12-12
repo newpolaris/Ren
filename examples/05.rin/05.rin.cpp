@@ -19,7 +19,7 @@
 #include <iostream>
 #include <chrono>
 #include <cstdlib>
-#include <glm/glm.hpp>
+#include <random>
 
 #include "device.h"
 #include "mesh.h"
@@ -28,10 +28,8 @@
 #include "synchronizes.h"
 #include "resources.h"
 #include "swapchain.h"
+#include "math.h"
 #include "bits.h"
-
-#include <random>
-#include <glm/ext/quaternion_transform.hpp>
 
 #define SUPPORT_MULTIFRAME_IN_FLIGHT 0
 
@@ -40,78 +38,15 @@ namespace {
 };
 
 struct alignas(16) GraphicsData {
-    glm::mat4x4 project;
+    mat4x4 project;
 };
 
 // per element memory is allocated align in 16 byte
 // but, it seems that there's no neeed to add last element pad
 struct alignas(16) CullingData {
-    glm::vec4 frustums[6];
+    vec4 frustums[6];
     uint32_t draw_count;
 };
-
-VkInstance CreateInstance(
-    const char* ApplicationName,
-    const char* EngineName) {
-
-    const char* validation_layers[] = {
-        "VK_LAYER_LUNARG_standard_validation",
-    };
-     
-    const char* extension_names[] = {
-        VK_KHR_SURFACE_EXTENSION_NAME,
-    #ifdef WIN32
-        VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
-    #else
-        #error
-    #endif
-    #if _DEBUG
-        VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
-    #endif
-    };
-
-    VkApplicationInfo app_info = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
-    app_info.pApplicationName = ApplicationName;
-    app_info.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-    app_info.pEngineName = EngineName;
-    app_info.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    app_info.apiVersion = VK_API_VERSION_1_1;
-
-    VkInstanceCreateInfo info = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
-    info.pApplicationInfo = &app_info;
-    info.enabledLayerCount = ARRAY_SIZE(validation_layers);
-    info.ppEnabledLayerNames = validation_layers;
-    info.enabledExtensionCount = ARRAY_SIZE(extension_names);
-    info.ppEnabledExtensionNames = extension_names;
-
-    VkInstance instance = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateInstance(&info, nullptr, &instance));
-    return instance;
-}
-
-VkDebugUtilsMessengerEXT CreateDebugCallback(VkInstance instance, PFN_vkDebugUtilsMessengerCallbackEXT debugcallback) {
-    if (vkCreateDebugUtilsMessengerEXT == nullptr)
-        return VK_NULL_HANDLE;
-
-    VkDebugUtilsMessengerCreateInfoEXT info = {VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
-    info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
-                           VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-                           VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-    info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-                       VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-                       VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-    info.pfnUserCallback = debugcallback;
-
-    VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateDebugUtilsMessengerEXT(instance, &info, nullptr, &messenger));
-    return messenger;
-}
-
-void DestroyDebugCallback(VkInstance instance, VkDebugUtilsMessengerEXT messenger) {
-    if (vkDestroyDebugUtilsMessengerEXT == nullptr)
-        return;
-    vkDestroyDebugUtilsMessengerEXT(instance, messenger, nullptr);
-}
 
 VkRenderPass CreateRenderPass(VkDevice device, VkFormat color_format, VkFormat depth_format) {
     VkAttachmentDescription desc[2] = {};
@@ -152,49 +87,6 @@ VkRenderPass CreateRenderPass(VkDevice device, VkFormat color_format, VkFormat d
     return renderpass;
 }
 
-VkSurfaceFormatKHR GetSurfaceFormat(VkPhysicalDevice physical_device, VkSurfaceKHR surface) {
-    uint32_t formatcount = 0;
-    VK_ASSERT(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatcount, nullptr));
-    std::vector<VkSurfaceFormatKHR> surfaceformats(formatcount);
-    VK_ASSERT(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatcount, surfaceformats.data()));
-
-    // Test if available
-    VkSurfaceFormatKHR surfaceformat = { VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
-    for (auto format : surfaceformats)
-    {
-        if (format.format == VK_FORMAT_B8G8R8A8_UNORM && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
-            surfaceformat = format;
-            break;
-        }
-    }
-    ASSERT(surfaceformat.format != VK_FORMAT_UNDEFINED);
-    return surfaceformat;
-}
-
-SurfaceProperties CreateSurfaceProperties(VkPhysicalDevice physical_device, const QueueFamilyProperties& properties,
-                                          VkSurfaceKHR surface) {
-    VkSurfaceFormatKHR swapchain_format = GetSurfaceFormat(physical_device, surface);
-
-    uint32_t presentcount = 0;
-    VK_ASSERT(vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, surface, &presentcount, nullptr));
-    std::vector<VkPresentModeKHR> presentmodes(presentcount);
-    VK_ASSERT(vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, surface, &presentcount, presentmodes.data()));
-
-    VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
-    for (auto mode : presentmodes) {
-        if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
-            present_mode = mode;
-            break;
-        }
-    }
-
-    const uint32_t queue_family_index = GetQueueFamilyIndex(physical_device, properties, surface);
-    ASSERT(queue_family_index != VK_QUEUE_FAMILY_IGNORED);
-
-    return { swapchain_format, present_mode, queue_family_index };
-}
-
-
 VkFramebuffer CreateFramebuffer(VkDevice device, VkRenderPass pass, ImageViewList views, VkExtent2D extent) {
     VkFramebufferCreateInfo info = { VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
     info.renderPass = pass;
@@ -208,8 +100,6 @@ VkFramebuffer CreateFramebuffer(VkDevice device, VkRenderPass pass, ImageViewLis
     VK_ASSERT(vkCreateFramebuffer(device, &info, nullptr, &framebuffer));
     return framebuffer;
 }
-
-
 
 void UpdateViewportScissor(VkExtent2D extent, VkViewport* viewport, VkRect2D* scissor) {
     // viewport trick to make positive y upward 
@@ -283,7 +173,7 @@ std::vector<VkDrawIndexedIndirectCommand> CreateIndirectCommandBuffer(const Mesh
     for (size_t i = 0; i < draws.size(); i++) {
         for (size_t k = 0; k < mesh.meshlet_instances.size(); k++) {
             auto cone = mesh.meshlets[k].cone;
-            auto cosangle = glm::dot(glm::vec3(cone[0], cone[1], cone[2]), glm::vec3(0, 0, 1));
+            auto cosangle = glm::dot(vec3(cone[0], cone[1], cone[2]), vec3(0, 0, 1));
             if (cone[3] < cosangle)
                 continue;
 
@@ -349,20 +239,6 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityF
     if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
         ASSERT(!"Validation error occurs!");
     return VK_FALSE;
-}
-
-glm::mat4x4 PerspectiveProjection(float fovY, float aspect, float nearz) {
-    float f = 1.0f / glm::tan(fovY/ 2.0f);
-    return glm::mat4(f / aspect, 0.0f,  0.0f,  0.0f,
-                           0.0f,    f,  0.0f,  0.0f,
-                           0.0f, 0.0f,  0.0f,  1.0f,
-                           0.0f, 0.0f, nearz,  0.0f);
-}
-
-glm::vec4 NormalizePlane(const glm::vec4& plane) {
-    glm::vec3 normal = glm::vec3(plane);
-    float normalize_constat = glm::dot(normal, normal);
-    return plane * glm::inversesqrt(normalize_constat);
 }
 
 int main() {
@@ -492,35 +368,35 @@ int main() {
     const uint32_t draw_count = 2000;
     std::vector<MeshDraw> draws(draw_count);
     for (uint32_t i = 0; i < draw_count; i++) {
-        glm::vec3 axis = glm::vec3( urd(eng)*2 - 1, urd(eng)*2 - 1, urd(eng)*2 - 1);
+        vec3 axis = vec3( urd(eng)*2 - 1, urd(eng)*2 - 1, urd(eng)*2 - 1);
         float angle = glm::radians(urd(eng) * 90.f);
 
         draws[i].position[0] = urd(eng) * 20.f - 10.f;
         draws[i].position[1] = urd(eng) * 20.f - 10.f;
         draws[i].position[2] = urd(eng) * 20.f - 10.f;
         draws[i].scale = urd(eng) + 0.5f;
-        draws[i].orientation = glm::rotate(glm::quat(1, 0, 0, 0), angle, axis); 
+        draws[i].orientation = glm::rotate(quat(1, 0, 0, 0), angle, axis); 
         draws[i].index_count = static_cast<uint32_t>(mesh.indices.size());
         draws[i].center = mesh.center;
         draws[i].radius = mesh.radius;
     }
 
     // meshdarw buffer
-    const VkDeviceSize mdb_size = sizeof(MeshDraw) * draws.size();
+    const VkDeviceSize meshdrawbuffer_size = sizeof(MeshDraw) * draws.size();
     Buffer meshdraw_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        device_local_flags, mdb_size });
-    UploadBuffer(device, command_pool, command_queue, staging, meshdraw_buffer, mdb_size, draws.data());
+        device_local_flags, meshdrawbuffer_size });
+    UploadBuffer(device, command_pool, command_queue, staging, meshdraw_buffer, meshdrawbuffer_size, draws.data());
 
     // meshdraw-command buffer
-    const VkDeviceSize mdcb_size = 1024*1024*128;
+    const VkDeviceSize meshdrawcommandbuffer_size = 1024*1024*128;
     Buffer meshdraw_command_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        device_local_flags, mdcb_size });
+        device_local_flags, meshdrawcommandbuffer_size });
 
     Buffer draw_count_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        device_local_flags, 4});
+        device_local_flags, sizeof(uint32_t)});
 
     std::vector<VkDrawIndexedIndirectCommand> indirects = CreateIndirectCommandBuffer(mesh, draws);
     const uint32_t indirect_draw_count = static_cast<uint32_t>(indirects.size());
@@ -603,21 +479,16 @@ int main() {
             indirect_command_count = indirect_draw_count;
 
         float aspect = static_cast<float>(swapchain.extent.width) / swapchain.extent.height;
-        const glm::mat4x4 project = PerspectiveProjection(glm::radians(70.f), aspect, 0.01f);
+        const mat4x4 project = PerspectiveProjection(glm::radians(70.f), aspect, 0.01f);
 
         const GraphicsData graphics_data = { project };
         CullingData culling_data;
         culling_data.draw_count = indirect_command_count;
 
-        const uint32_t max_draw_distance = 200;
-        auto projectT = glm::transpose(project);
-        memset(culling_data.frustums, 0, sizeof(culling_data.frustums));
-        culling_data.frustums[0] = NormalizePlane(projectT[3] + projectT[0]); // x + w > 0
-        culling_data.frustums[1] = NormalizePlane(projectT[3] - projectT[0]); // x - w < 0
-        culling_data.frustums[2] = NormalizePlane(projectT[3] + projectT[1]); // y + w > 0
-        culling_data.frustums[3] = NormalizePlane(projectT[3] - projectT[1]); // y - w < 0
-        culling_data.frustums[4] = NormalizePlane(projectT[3] - projectT[2]); // z - w < 0
-        culling_data.frustums[5] = NormalizePlane(glm::vec4(0, 0, -1, max_draw_distance)); // infinite far plane
+        const float max_draw_distance = 200.f;
+        const auto frustums = GetFrustum(project, max_draw_distance);
+        for (uint32_t i = 0; i < 6; i++)
+            culling_data.frustums[i] = frustums[i];
 
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmd_pipeline);
         if (!cluster_culling)
@@ -703,7 +574,7 @@ int main() {
         vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                              VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, ARRAYSIZE(copyBarriers), copyBarriers);
 
-        // TODO: implement scale paste
+        // TODO: implement scale paste to swapchain
         VkImageCopy copy_region = {};
         copy_region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         copy_region.srcSubresource.layerCount = 1;

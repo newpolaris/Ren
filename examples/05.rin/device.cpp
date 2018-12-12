@@ -123,3 +123,106 @@ uint32_t GetQueueFamilyIndex(VkPhysicalDevice device, const QueueFamilyPropertie
     return VK_QUEUE_FAMILY_IGNORED;
 }
 
+VkInstance CreateInstance(const char* ApplicationName, const char* EngineName) {
+
+    const char* validation_layers[] = {
+        "VK_LAYER_LUNARG_standard_validation",
+    };
+     
+    const char* extension_names[] = {
+        VK_KHR_SURFACE_EXTENSION_NAME,
+    #ifdef WIN32
+        VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
+    #else
+        #error
+    #endif
+    #if _DEBUG
+        VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
+    #endif
+    };
+
+    VkApplicationInfo app_info = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
+    app_info.pApplicationName = ApplicationName;
+    app_info.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+    app_info.pEngineName = EngineName;
+    app_info.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+    app_info.apiVersion = VK_API_VERSION_1_1;
+
+    VkInstanceCreateInfo info = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
+    info.pApplicationInfo = &app_info;
+    info.enabledLayerCount = ARRAY_SIZE(validation_layers);
+    info.ppEnabledLayerNames = validation_layers;
+    info.enabledExtensionCount = ARRAY_SIZE(extension_names);
+    info.ppEnabledExtensionNames = extension_names;
+
+    VkInstance instance = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateInstance(&info, nullptr, &instance));
+    return instance;
+}
+
+VkDebugUtilsMessengerEXT CreateDebugCallback(VkInstance instance, PFN_vkDebugUtilsMessengerCallbackEXT debugcallback) {
+    if (vkCreateDebugUtilsMessengerEXT == nullptr)
+        return VK_NULL_HANDLE;
+
+    VkDebugUtilsMessengerCreateInfoEXT info = {VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
+    info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+                           VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                           VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                       VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                       VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    info.pfnUserCallback = debugcallback;
+
+    VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateDebugUtilsMessengerEXT(instance, &info, nullptr, &messenger));
+    return messenger;
+}
+
+void DestroyDebugCallback(VkInstance instance, VkDebugUtilsMessengerEXT messenger) {
+    if (vkDestroyDebugUtilsMessengerEXT == nullptr)
+        return;
+    vkDestroyDebugUtilsMessengerEXT(instance, messenger, nullptr);
+}
+
+VkSurfaceFormatKHR GetSurfaceFormat(VkPhysicalDevice physical_device, VkSurfaceKHR surface) {
+    uint32_t formatcount = 0;
+    VK_ASSERT(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatcount, nullptr));
+    std::vector<VkSurfaceFormatKHR> surfaceformats(formatcount);
+    VK_ASSERT(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatcount, surfaceformats.data()));
+
+    // Test if available
+    VkSurfaceFormatKHR surfaceformat = { VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
+    for (auto format : surfaceformats)
+    {
+        if (format.format == VK_FORMAT_B8G8R8A8_UNORM && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            surfaceformat = format;
+            break;
+        }
+    }
+    ASSERT(surfaceformat.format != VK_FORMAT_UNDEFINED);
+    return surfaceformat;
+}
+
+SurfaceProperties CreateSurfaceProperties(VkPhysicalDevice physical_device, const QueueFamilyProperties& properties,
+                                          VkSurfaceKHR surface) {
+    VkSurfaceFormatKHR swapchain_format = GetSurfaceFormat(physical_device, surface);
+
+    uint32_t presentcount = 0;
+    VK_ASSERT(vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, surface, &presentcount, nullptr));
+    std::vector<VkPresentModeKHR> presentmodes(presentcount);
+    VK_ASSERT(vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, surface, &presentcount, presentmodes.data()));
+
+    VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
+    for (auto mode : presentmodes) {
+        if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
+            present_mode = mode;
+            break;
+        }
+    }
+
+    const uint32_t queue_family_index = GetQueueFamilyIndex(physical_device, properties, surface);
+    ASSERT(queue_family_index != VK_QUEUE_FAMILY_IGNORED);
+
+    return { swapchain_format, present_mode, queue_family_index };
+}
+
