@@ -122,6 +122,13 @@ struct MemberDecoration_
     std::optional<uint32_t> operand;
 };
 
+struct Constant_
+{
+    uint32_t result_type_id;
+    uint32_t result_id;
+    uint32_t value;
+};
+
 struct PointerType_
 {
     uint32_t result_id;
@@ -155,6 +162,13 @@ struct StructType_
     std::vector<word_t> member_ids;
 };
 
+struct ArrayType_
+{
+    uint32_t result_id;
+    uint32_t element_type_id;
+    uint32_t length_id;
+};
+
 struct MatrixType_
 {
     word_t result_id;
@@ -171,10 +185,12 @@ struct IntermediateType {
     std::vector<EntryPoint> entry_points;
     std::unordered_map<uint32_t, std::vector<Decoration_>> decorations;
     std::unordered_map<uint32_t, std::vector<MemberDecoration_>> member_decorations;
+    std::unordered_map<uint32_t, Constant_> constants;
     std::unordered_map<uint32_t, Variable_> variables;
     std::unordered_map<uint32_t, PointerType_> pointer_types;
     std::map<uint32_t, PrimitiveType_> primitive_types; // process order dependent
     std::map<uint32_t, StructType_> struct_types; 
+    std::map<uint32_t, ArrayType_> array_types;
     std::unordered_map<uint32_t, Name_> names;
     std::unordered_map<uint32_t, MemberName_> member_names;
 };
@@ -273,6 +289,16 @@ void ParseInstruction(word_t opcode, size_t word_count, const StreamReader& read
         uint32_t rtid = reader.uint32(1);
         intermediate->variables.emplace(rid, Variable_ { rtid, rid, SpvStorageClass(reader.uint32(3)) });
     } break;
+    case SpvOpConstant:
+    {
+        ASSERT(word_count >= 4);
+        // %27 = OpConstant %6 3
+        uint32_t rid = reader.uint32(2);
+        ASSERT(rid < id_bound);
+        uint32_t rtid = reader.uint32(1);
+        word_t value = reader.uint32(3); // TODO: at least one word, can be multiple words
+        intermediate->constants.emplace(rid, Constant_ { rtid, rid, value });
+    } break;
     case SpvOpTypePointer:
     {
         ASSERT(word_count == 4);
@@ -326,6 +352,15 @@ void ParseInstruction(word_t opcode, size_t word_count, const StreamReader& read
         for (uint32_t it = 2; it < word_count; it++)
             member_ids.push_back(reader.uint32(it));
         intermediate->struct_types.emplace(rid, StructType_ { rid, member_ids });
+    } break;
+    case SpvOpTypeArray:
+    {
+        ASSERT(word_count == 4);
+        // %28 = OpTypeArray %6 %27
+        uint32_t rid = reader.uint32(1);
+        uint32_t etid = reader.uint32(2);
+        uint32_t lid = reader.uint32(3); // spec: integer type const op with at least 1
+        intermediate->array_types.emplace(rid, ArrayType_ { rid, etid, lid });
     } break;
     }
 }
@@ -427,7 +462,15 @@ void DecorateStruct(const internal::MemberDecoration_& deco, MemberType* m) {
         m->builtin = deco.operand.value();
         break;
     }
+}
 
+void ParseArray(const internal::ArrayType_& arr, const internal::IntermediateType& intermediate,
+                 ModuleType* module) {
+    uint32_t result_id = arr.result_id;
+    uint32_t element_type_id = arr.element_type_id;
+    uint32_t length = arr.length_id;
+    ASSERT(length >= 1);
+    module->array_types.emplace(result_id, ArrayType { element_type_id, length });
 }
 
 void ParseStruct(const internal::StructType_& var, const internal::IntermediateType& intermediate,
@@ -476,6 +519,16 @@ void DecorateVariable(const internal::Decoration_& deco, Variable* v) {
     }
 }
 
+void ParseConstant(const internal::Constant_& cons, const internal::IntermediateType& intermediate,
+                   ModuleType* module) {
+    Constant c = {};
+    c.type_id = cons.result_type_id;
+    c.value = cons.value;
+
+    uint32_t rid = cons.result_id;
+    module->constants.emplace(rid, std::move(c));
+}
+
 void ParseVariable(const internal::Variable_& var, const internal::IntermediateType& intermediate,
                    ModuleType* module) {
     Variable v = {};
@@ -507,9 +560,15 @@ SpirvReflections ReflectShader(const void* data, size_t size) {
     internal::ParseSpirv(data, size, &intermediate);
 
     ModuleType module;
+    for (const auto& type : intermediate.constants)
+        ParseConstant(type.second, intermediate, &module);
+
     PrimitiveParserHelper helper(&module);
     for (const auto& type : intermediate.primitive_types)
         std::visit(helper, type.second);
+
+    for (const auto& type : intermediate.array_types)
+        ParseArray(type.second, intermediate, &module);
 
     for (const auto& type : intermediate.struct_types)
         ParseStruct(type.second, intermediate, &module);

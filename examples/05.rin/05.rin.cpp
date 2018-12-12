@@ -41,6 +41,8 @@ struct alignas(16) GraphicsData {
     glm::mat4x4 project;
 };
 
+// per element memory is allocated align in 16 byte
+// but, it seems that there's no neeed to add last element pad
 struct alignas(16) CullingData {
     glm::vec4 frustums[6];
     uint32_t draw_count;

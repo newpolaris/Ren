@@ -48,16 +48,26 @@ uint32_t GetPrimitiveStride(const spirv::SpirvReflections& reflections, const ui
 }
 
 uint32_t GetStride(const spirv::SpirvReflections& reflections, const uint32_t& type_id) {
-    auto it = reflections.struct_types.find(type_id);
-    if (it != reflections.struct_types.end()) {
+    auto sit = reflections.struct_types.find(type_id);
+    if (sit != reflections.struct_types.end()) {
         // last one's offset + length
-        const auto& last = it->second.members.back();
+        const auto& last = sit->second.members.back();
         return last.offset + GetStride(reflections, last.type_id);
-    } else {
-        auto pit = reflections.primitive_types.find(type_id);
-        ASSERT(pit != reflections.primitive_types.end());
-        return GetPrimitiveStride(pit->second);
     }
+    auto ait = reflections.array_types.find(type_id);
+    if (ait != reflections.array_types.end()) {
+        const auto& arr = ait->second;
+        uint32_t element_stride = GetStride(reflections, arr.element_type_id);
+        auto cit = reflections.constants.find(arr.length_id);
+        ASSERT(cit != reflections.constants.end());
+        uint32_t length = cit->second.value;
+        ASSERT(length >= 1);
+        return element_stride * length;
+    }
+    // parse others
+    auto pit = reflections.primitive_types.find(type_id);
+    ASSERT(pit != reflections.primitive_types.end());
+    return GetPrimitiveStride(pit->second);
 }
 
 VkFormat GetPrimitiveFormat(const spirv::PrimitiveType& type) {

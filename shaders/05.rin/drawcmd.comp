@@ -36,12 +36,8 @@ void main() {
     float radius = draw.scale * draw.radius;
 
     bool cull = false;
-    cull = cull || (dot(constant.frustum0, vec4(center, 1.0)) <= -radius);
-    cull = cull || (dot(constant.frustum1, vec4(center, 1.0)) <= -radius);
-    cull = cull || (dot(constant.frustum2, vec4(center, 1.0)) <= -radius);
-    cull = cull || (dot(constant.frustum3, vec4(center, 1.0)) <= -radius);
-    cull = cull || (dot(constant.frustum4, vec4(center, 1.0)) <= -radius);
-    cull = cull || (dot(constant.frustum5, vec4(center, 1.0)) <= -radius);
+    for (uint i = 0; i < 6; i++) 
+        cull = cull || (dot(constant.frustum[i], vec4(center, 1.0)) <= -radius);
 
     if (cull)
         return;

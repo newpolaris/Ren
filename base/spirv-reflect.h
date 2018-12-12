@@ -25,6 +25,12 @@ struct MemberType
     std::optional<uint32_t> col_major; // TODO
 };
 
+struct ArrayType
+{
+    uint32_t element_type_id;
+    uint32_t length_id;
+};
+
 struct StructType
 {
     std::optional<std::string> name;
@@ -34,6 +40,12 @@ struct StructType
 struct MatrixType
 {
     std::optional<std::string> name;
+};
+
+struct Constant
+{
+    uint32_t type_id;
+    uint32_t value;
 };
 
 struct Variable
@@ -59,8 +71,10 @@ struct ModuleType
 {
     std::vector<EntryPoint> entry_points;
     std::unordered_map<uint32_t, PrimitiveType> primitive_types;
+    std::unordered_map<uint32_t, ArrayType> array_types;
     std::unordered_map<uint32_t, StructType> struct_types;
     std::unordered_map<uint32_t, MatrixType> matrix_types;
+    std::unordered_map<uint32_t, Constant> constants;
     std::unordered_map<uint32_t, Variable> variables;
     std::unordered_map<SpvStorageClass, std::vector<uint32_t>> stroage_indices;
 };

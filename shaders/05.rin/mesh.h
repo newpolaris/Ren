@@ -31,7 +31,7 @@ struct MeshDrawCommand
 
 struct CullingData
 {
-    vec4 frustum0, frustum1, frustum2, frustum3, frustum4, frustum5;
+    vec4 frustum[6];
     uint draw_count;
-    uint pad0, pad1, pad2;
+    uint pad[3];
 };
