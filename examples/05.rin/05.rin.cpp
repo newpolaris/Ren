@@ -21,11 +21,13 @@
 #include <cstdlib>
 #include <glm/glm.hpp>
 
+#include "device.h"
 #include "mesh.h"
 #include "macro.h"
 #include "shaders.h"
 #include "synchronizes.h"
 #include "resources.h"
+#include "swapchain.h"
 #include "bits.h"
 
 #include <random>
@@ -111,126 +113,6 @@ void DestroyDebugCallback(VkInstance instance, VkDebugUtilsMessengerEXT messenge
     vkDestroyDebugUtilsMessengerEXT(instance, messenger, nullptr);
 }
 
-VkSurfaceKHR CreateSurface(VkInstance instance, GLFWwindow* windows) {
-    VkSurfaceKHR surface = VK_NULL_HANDLE;
-
-#ifdef WIN32
-    VkWin32SurfaceCreateInfoKHR info = { VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR };
-    info.hinstance = GetModuleHandle(NULL);
-    info.hwnd = glfwGetWin32Window(windows);
-
-    VK_ASSERT(vkCreateWin32SurfaceKHR(instance, &info, nullptr, &surface));
-#else
-    #error
-#endif
-
-    return surface;
-}
-
-VkPhysicalDevice CreatePhysicalDevice(VkInstance instance) {
-    uint32_t device_count = 0;
-    VK_ASSERT(vkEnumeratePhysicalDevices(instance, &device_count, nullptr));
-    std::vector<VkPhysicalDevice> devices(device_count);
-    VK_ASSERT(vkEnumeratePhysicalDevices(instance, &device_count, devices.data()));
-    
-    for (auto device : devices)
-    {
-        VkPhysicalDeviceProperties properties = {};
-        vkGetPhysicalDeviceProperties(device, &properties);
-        if (properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
-            return device;
-    }
-    return devices.front();
-}
-
-using QueueFamilyProperties = std::vector<VkQueueFamilyProperties>;
-
-struct PhysicalDeviceProperties {
-    VkPhysicalDeviceProperties properties;
-    VkPhysicalDeviceMemoryProperties memory;
-    QueueFamilyProperties queue;
-};
-
-PhysicalDeviceProperties CreatePhysicalDeviceProperties(VkPhysicalDevice device)
-{
-    VkPhysicalDeviceProperties properties;
-    vkGetPhysicalDeviceProperties(device, &properties);
-
-    VkPhysicalDeviceMemoryProperties memory;
-    vkGetPhysicalDeviceMemoryProperties(device, &memory);
-
-    uint32_t count = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &count, nullptr);
-    QueueFamilyProperties queue(count);
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &count, queue.data());
-
-    return PhysicalDeviceProperties { properties, memory, queue };
-}
-
-// Choose graphics queue that also support present
-uint32_t GetQueueFamilyIndex(VkPhysicalDevice device, const QueueFamilyProperties& properties, VkSurfaceKHR surface) {
-    const auto& queue_properties = properties;
-
-    for (size_t i = 0; i < properties.size(); i++) {
-        VkBool32 support = VK_FALSE;
-        VK_ASSERT(vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &support));
-
-        if ((properties[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && properties[i].queueCount > 0)
-            return i;
-    }
-    return VK_QUEUE_FAMILY_IGNORED;
-}
-
-VkDevice CreateDevice(VkPhysicalDevice physical_device, uint32_t queue_family_index) {
-    std::vector<const char*> device_extensions {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
-        VK_KHR_16BIT_STORAGE_EXTENSION_NAME,
-        VK_KHR_8BIT_STORAGE_EXTENSION_NAME,
-        VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME,
-    };
-
-    const float qeue_priorites[] = { 1.f };
-    VkDeviceQueueCreateInfo queue_create_info = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO  };
-    queue_create_info.queueFamilyIndex = queue_family_index;
-    queue_create_info.queueCount = ARRAY_SIZE(qeue_priorites);
-    queue_create_info.pQueuePriorities = qeue_priorites;
-
-    uint32_t extensionCount;
-    vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &extensionCount, nullptr);
-
-    std::vector<VkExtensionProperties> availableExtensions(extensionCount);
-    vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &extensionCount, availableExtensions.data());
-
-    VkPhysicalDeviceFeatures2 features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
-    features.features.multiDrawIndirect = true;
-
-    VkPhysicalDevice8BitStorageFeaturesKHR features8 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES_KHR };
-    features8.storageBuffer8BitAccess = true;
-    features8.uniformAndStorageBuffer8BitAccess = true;
-
-    VkPhysicalDevice16BitStorageFeatures features16 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES_KHR };
-    features16.storageBuffer16BitAccess = true;
-    features16.uniformAndStorageBuffer16BitAccess = true;
-
-    VkPhysicalDeviceMeshShaderFeaturesNV featuresMesh = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_NV };
-    featuresMesh.meshShader = true;
-
-    features.pNext = &features16;
-    features16.pNext = &features8;
-
-    VkDeviceCreateInfo info = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
-    info.queueCreateInfoCount = 1;
-    info.pQueueCreateInfos = &queue_create_info;
-    info.enabledExtensionCount = static_cast<uint32_t>(device_extensions.size());;
-    info.ppEnabledExtensionNames = device_extensions.data();
-    info.pNext = &features;
-
-    VkDevice device = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateDevice(physical_device, &info, nullptr, &device));
-    return device;
-}
-
 VkRenderPass CreateRenderPass(VkDevice device, VkFormat color_format, VkFormat depth_format) {
     VkAttachmentDescription desc[2] = {};
     desc[0].format = color_format;
@@ -289,13 +171,8 @@ VkSurfaceFormatKHR GetSurfaceFormat(VkPhysicalDevice physical_device, VkSurfaceK
     return surfaceformat;
 }
 
-struct SurfaceProperties {
-    VkSurfaceFormatKHR format;
-    VkPresentModeKHR present_mode;
-    uint32_t queue_family_index;
-};
-
-SurfaceProperties CreateSurfaceProperties(VkPhysicalDevice physical_device, const QueueFamilyProperties& properties, VkSurfaceKHR surface) {
+SurfaceProperties CreateSurfaceProperties(VkPhysicalDevice physical_device, const QueueFamilyProperties& properties,
+                                          VkSurfaceKHR surface) {
     VkSurfaceFormatKHR swapchain_format = GetSurfaceFormat(physical_device, surface);
 
     uint32_t presentcount = 0;
@@ -317,38 +194,6 @@ SurfaceProperties CreateSurfaceProperties(VkPhysicalDevice physical_device, cons
     return { swapchain_format, present_mode, queue_family_index };
 }
 
-VkSwapchainKHR CreateSwapchain(VkDevice device, VkSurfaceKHR surface, const SurfaceProperties& properties,
-                               const VkSurfaceCapabilitiesKHR& capabilities, VkSwapchainKHR oldswapchain) {
-    constexpr VkCompositeAlphaFlagBitsKHR composite_alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    constexpr VkSurfaceTransformFlagBitsKHR pretransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-
-    ASSERT(capabilities.supportedTransforms & pretransform);
-    ASSERT(capabilities.supportedCompositeAlpha & composite_alpha);
-
-    const uint32_t imagecount = std::min(capabilities.minImageCount + 1, capabilities.maxImageCount);
-
-    // The Vulkan spec states: imageExtent must be between minImageExtent and maxImageExtent,
-    VkExtent2D currentExtent = capabilities.currentExtent;
-
-    VkSwapchainCreateInfoKHR info = { VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR };
-    info.surface = surface;
-    info.minImageCount = imagecount;
-    info.imageFormat = properties.format.format;
-    info.imageColorSpace = properties.format.colorSpace;
-    info.imageExtent = currentExtent;
-    info.imageArrayLayers = std::min(1u, capabilities.maxImageArrayLayers);
-    info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    info.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-    info.compositeAlpha = composite_alpha;
-    info.presentMode = properties.present_mode;
-    info.clipped = VK_TRUE;
-    info.oldSwapchain = oldswapchain;
-
-    VkSwapchainKHR swapchain = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateSwapchainKHR(device, &info, nullptr, &swapchain));
-    return swapchain;
-}
 
 VkFramebuffer CreateFramebuffer(VkDevice device, VkRenderPass pass, ImageViewList views, VkExtent2D extent) {
     VkFramebufferCreateInfo info = { VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
@@ -364,40 +209,6 @@ VkFramebuffer CreateFramebuffer(VkDevice device, VkRenderPass pass, ImageViewLis
     return framebuffer;
 }
 
-struct Swapchain {
-    VkExtent2D extent;
-    VkSwapchainKHR swapchain;
-    std::vector<VkImage> images;
-};
-
-void DestroySwapchain(VkDevice device, Swapchain* result);
-
-void CreateSwapchain(VkDevice device, const VkSurfaceCapabilitiesKHR& capabilities, VkSurfaceKHR surface,
-                     const SurfaceProperties& properties, VkRenderPass renderpass, Swapchain* result) {
-    ASSERT(result);
-
-    // recreate new swapchain with old swapchain
-    VkSwapchainKHR swapchain = CreateSwapchain(device, surface, properties, capabilities, result->swapchain);
-
-    // destroy old swapchain
-    DestroySwapchain(device, result);
-
-    VkExtent2D extent = capabilities.currentExtent;
-
-    uint32_t count = 0;
-    VK_ASSERT(vkGetSwapchainImagesKHR(device, swapchain, &count, nullptr));
-    std::vector<VkImage> images(count);
-    VK_ASSERT(vkGetSwapchainImagesKHR(device, swapchain, &count, images.data()));
-
-    *result = Swapchain { extent, swapchain, images };
-}
-
-void DestroySwapchain(VkDevice device, Swapchain* result) {
-    ASSERT(result);
-
-    vkDestroySwapchainKHR(device, result->swapchain, nullptr);
-    result->swapchain = VK_NULL_HANDLE;
-}
 
 
 void UpdateViewportScissor(VkExtent2D extent, VkViewport* viewport, VkRect2D* scissor) {
