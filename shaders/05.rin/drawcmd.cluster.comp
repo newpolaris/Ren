@@ -7,8 +7,6 @@
 
 #include "mesh.h"
 
-#define USE_ATOMIC 1
-
 layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 layout(push_constant) uniform param_block {
@@ -64,9 +62,7 @@ void main() {
     for (uint i = 0; i < 6; i++) 
         cull = cull || (dot(constant.frustum[i], vec4(center, 1.0)) <= -radius);
 
-    #if USE_ATOMIC
     if (cull) return;
-    #endif
 
     uint mi = meshlet_index;
     {
@@ -78,30 +74,14 @@ void main() {
         float cone_cutoff = cone.w;
 
         cull = (ConeCull(center, radius, cone_axis, cone_cutoff, vec3(0, 0, 0)));
-        #if USE_ATOMIC
         if (cull) return;
-        #endif
     }
 
-    #if !USE_ATOMIC
-    uvec4 vote = subgroupBallot(!cull);    
-    uint count = subgroupBallotBitCount(vote);
-    if (count == 0)
-        return;
+    uint slot = atomicAdd(draw_command_count, 1);
 
-    uint group_start = 0;
-    if (ti == 0)
-        group_start = atomicAdd(draw_command_count, count);
-    uint index = subgroupBallotExclusiveBitCount(vote);
-    uint base = subgroupBroadcastFirst(group_start) + index;
-    if (cull) return;
-    #else
-    uint base = atomicAdd(draw_command_count, 1);
-    #endif
-
-    commands[base].index_count = meshlets[mi].index_count;
-    commands[base].instance_count = 1;
-    commands[base].first_index = meshlets[mi].index_offset;
-    commands[base].vertex_offset = 0;
-    commands[base].first_instance = mesh_index;
+    commands[slot].index_count = meshlets[mi].index_count;
+    commands[slot].instance_count = 1;
+    commands[slot].first_index = meshlets[mi].index_offset;
+    commands[slot].vertex_offset = 0;
+    commands[slot].first_instance = mesh_index;
 }

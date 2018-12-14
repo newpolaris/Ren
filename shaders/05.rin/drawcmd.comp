@@ -2,9 +2,12 @@
 
 #extension GL_EXT_shader_16bit_storage: require
 #extension GL_EXT_shader_8bit_storage: require
+#extension GL_KHR_shader_subgroup_ballot: require
 #extension GL_GOOGLE_include_directive: require 
 
 #include "mesh.h"
+
+#define USE_BALLOT 0
 
 layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
@@ -39,14 +42,25 @@ void main() {
     for (uint i = 0; i < 6; i++) 
         cull = cull || (dot(constant.frustum[i], vec4(center, 1.0)) <= -radius);
 
-    if (cull)
+#if USE_BALLOT
+    uvec4 vote = subgroupBallot(!cull);    
+    uint count = subgroupBallotBitCount(vote);
+    if (count == 0)
         return;
+    uint group_start = 0;
+    if (ti == 0)
+        group_start = atomicAdd(draw_command_count, count);
+    uint index = subgroupBallotExclusiveBitCount(vote);
+    uint base = subgroupBroadcastFirst(group_start) + index;
+    if (cull) return;
+#else
+    if (cull) return;
+    uint base = atomicAdd(draw_command_count, 1);
+#endif
 
-    uint index = atomicAdd(draw_command_count, 1);
-
-    commands[index].index_count = mesh_draws[dti].index_count;
-    commands[index].instance_count = 1;
-    commands[index].first_index = 0;
-    commands[index].vertex_offset = 0;
-    commands[index].first_instance = dti;
+    commands[base].index_count = mesh_draws[dti].index_count;
+    commands[base].instance_count = 1;
+    commands[base].first_index = 0;
+    commands[base].vertex_offset = 0;
+    commands[base].first_instance = dti;
 }
