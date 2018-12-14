@@ -294,7 +294,7 @@ int main() {
     VkSemaphore semaphore = CreateSemaphore(device, 0);
     VkSemaphore signal_semaphore = CreateSemaphore(device, 0);
 
-#if _DEBUG
+#if !_DEBUG
     const char* objfile = "models/kitten.obj";
 #else
     const char* objfile = "models/buddha.obj";
@@ -373,16 +373,18 @@ int main() {
         meshletdraws.emplace_back(std::move(draws));
     }
 
-    const VkDeviceSize meshletdrawbuffer_size = sizeof(MeshletDraw) * meshletdraws.size();
+    const uint32_t max_meshlet_count = 500;
+    const uint32_t meshlet_draw_count = static_cast<uint32_t>(draws.size() * max_meshlet_count);
+    const VkDeviceSize meshletdraw_buffer_size = sizeof(MeshletDraw) * meshletdraws.size();
     Buffer meshletdraw_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        device_local_flags, meshletdrawbuffer_size });
-    UploadBuffer(device, command_pool, command_queue, staging, meshletdraw_buffer, meshletdrawbuffer_size, meshletdraws.data());
+        device_local_flags, meshletdraw_buffer_size });
+    UploadBuffer(device, command_pool, command_queue, staging, meshletdraw_buffer, meshletdraw_buffer_size, meshletdraws.data());
 
-    const VkDeviceSize meshdrawcommandbuffer_size = 1024*1024*128;
+    const VkDeviceSize meshdraw_commandbuffer_size = 1024*1024*128;
     Buffer meshdraw_command_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-        device_local_flags, meshdrawcommandbuffer_size });
+        device_local_flags, meshdraw_commandbuffer_size });
 
     Buffer draw_count_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -447,14 +449,13 @@ int main() {
         const mat4x4 project = PerspectiveProjection(glm::radians(70.f), aspect, 0.01f);
 
         const GraphicsData graphics_data = { project };
-        CullingData culling_data;
-        culling_data.draw_count = draw_count;
 
         // Over 1 million max-command-count (not; call count, parameter) cause crash.
         // Maybe related with https://github.com/zeux/niagara
         // "NVidia GTX 10xx series GPUs cause VK_ERROR_DEVICE_LOST when drawCount is 1'000'000"
         const uint32_t max_command_count = 1'000'000;
 
+        CullingData culling_data;
         const float max_draw_distance = 200.f;
         const auto frustums = GetFrustum(project, max_draw_distance);
         for (uint32_t i = 0; i < 6; i++)
@@ -465,6 +466,9 @@ int main() {
 
             const auto& culling_pipeline = cluster_culling ? drawclustercmd_pipeline : drawcmd_pipeline;
             const auto& culling_program = cluster_culling ? drawclustercmd_program : drawcmd_program;
+            const auto& dispatch_count = cluster_culling ? meshlet_draw_count : draw_count; 
+
+            culling_data.draw_count = dispatch_count;
 
             vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, culling_pipeline);
             vkCmdFillBuffer(command_buffer, draw_count_buffer.buffer, 0, 4, 0);
@@ -480,7 +484,7 @@ int main() {
 
             vkCmdPushConstants(command_buffer, culling_program.layout, culling_program.push_constant_stages, 0, 
                                sizeof(culling_data), &culling_data);
-            vkCmdDispatch(command_buffer, uint32_t((draw_count + 31) / 32), 1, 1);
+            vkCmdDispatch(command_buffer, uint32_t((dispatch_count + 31) / 32), 1, 1);
 
             // Without barrier, first attempt that change culling status will result empty screen in few frames;
             VkBufferMemoryBarrier command_end[] = { 
@@ -612,7 +616,7 @@ int main() {
 
         char title[256] = {};  
         sprintf(title, "wait: %.2f ms; cpu: %.2f ms; gpu: %.2f ms (cull %.2f ms); triangles %d; meshlets %d; %.1fB tri/sec clustercull %s",
-                wait_average, cpu_average, gpu_average, cull_time, triangle_count, 1, trianglesPerSec,
+                wait_average, cpu_average, gpu_average, cull_time, triangle_count, mesh.meshlets.size(), trianglesPerSec,
                 cluster_culling ? "ON" : "OFF");
         glfwSetWindowTitle(windows, title);
     }

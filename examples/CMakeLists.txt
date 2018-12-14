@@ -28,7 +28,7 @@ function(buildExample EXAMPLE_NAME)
         add_custom_command(
             OUTPUT ${SPIRV}
             COMMAND ${CMAKE_COMMAND} -E make_directory "${SHADER_DIR}"
-            COMMAND ${GLSL_VALIDATOR} -V ${GLSL} -o ${SPIRV}
+            COMMAND ${GLSL_VALIDATOR} --target-env vulkan1.1 -V ${GLSL} -o ${SPIRV}
             DEPENDS ${GLSL} ${SHADER_HEADERS})
         list(APPEND SPIRV_BINARY_FILES ${SPIRV})
     endforeach(GLSL)
