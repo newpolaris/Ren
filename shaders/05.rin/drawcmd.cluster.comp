@@ -10,22 +10,31 @@
 layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 layout(push_constant) uniform param_block {
-    CullingData constant;
+    uint pad;
 };
 
 layout(binding = 0) readonly buffer MeshDraws {
-    MeshDraw mesh_draws[];
+    MeshDraw draws[];
 };
 
-layout(binding = 1) writeonly buffer MeshDrawCommands {
+layout(binding = 1) readonly buffer MeshletDraws {
+    MeshletDraw meshlets[];
+};
+
+layout(binding = 2) readonly buffer MeshletIndexs {
+	MeshletCall meshlet_indices[];
+};
+
+layout(binding = 3) readonly buffer DISPATCH_COUNT_BUFFER {
+	uint dispatch_count_buffer;
+};
+
+layout(binding = 4) writeonly buffer MeshDrawCommands {
     MeshDrawCommand commands[];
 };
-layout(binding = 2) writeonly buffer DrawCommandCount {
-	uint draw_command_count;
-};
 
-layout(binding = 3) readonly buffer MeshletDraws {
-    MeshletDraw meshlets[];
+layout(binding = 5) buffer DrawCommandCount {
+	uint draw_command_count;
 };
 
 bool ConeCull(vec4 cone, vec3 view) {
@@ -47,35 +56,22 @@ void main() {
     uint gi = gl_WorkGroupID.x; // SV_GroupID	
     uint dti = gl_GlobalInvocationID.x; // SV_DispatchThreadID
 
-    if (dti >= constant.draw_count)
-        return;
+    if (dti >= dispatch_count_buffer) return;
 
-    const uint max_meshlet = 500;
-    uint meshlet_index = dti % max_meshlet;
-    uint mesh_index = dti / max_meshlet; 
+	uint mesh_index = meshlet_indices[dti].mesh_id;
+	uint mi = meshlet_indices[dti].index;
 
-    MeshDraw draw = mesh_draws[mesh_index];
-    vec3 center = draw.scale * draw.center + draw.position;
-    float radius = draw.scale * draw.radius;
+    MeshDraw draw = draws[mesh_index];
 
-    bool cull = false;
-    for (uint i = 0; i < 6; i++) 
-        cull = cull || (dot(constant.frustum[i], vec4(center, 1.0)) <= -radius);
+    vec3 center = RotateQuat(meshlets[mi].center, draw.orientation) * draw.scale + draw.position;
+    float radius = meshlets[mi].radius * draw.scale;
 
+    vec4 cone = vec4(ivec4(meshlets[mi].cone)) / 127.0;
+    vec3 cone_axis = RotateQuat(cone.xyz, draw.orientation);
+    float cone_cutoff = cone.w;
+
+    bool cull = ConeCull(center, radius, cone_axis, cone_cutoff, vec3(0, 0, 0));
     if (cull) return;
-
-    uint mi = meshlet_index;
-    {
-        vec3 center = RotateQuat(meshlets[mi].center, draw.orientation) * draw.scale + draw.position;
-        float radius = meshlets[mi].radius * draw.scale;
-
-        vec4 cone = vec4(ivec4(meshlets[mi].cone)) / 127.0;
-        vec3 cone_axis = RotateQuat(cone.xyz, draw.orientation);
-        float cone_cutoff = cone.w;
-
-        cull = (ConeCull(center, radius, cone_axis, cone_cutoff, vec3(0, 0, 0)));
-        if (cull) return;
-    }
 
     uint slot = atomicAdd(draw_command_count, 1);
 

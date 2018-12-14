@@ -8,6 +8,7 @@
 
 Buffer CreateBuffer(VkDevice device, const VkPhysicalDeviceMemoryProperties& properties, const BufferCreateInfo& info) {
     ASSERT(info.size);
+    ASSERT(info.data != nullptr && (info.flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) || info.data == nullptr);
 
     VkBufferCreateInfo create_info = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
     create_info.size = info.size;

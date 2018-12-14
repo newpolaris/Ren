@@ -233,6 +233,7 @@ struct PushDescriptorBinding {
 };
 
 std::vector<PushDescriptorBinding> GetPushDesciptorBindingStages(ShaderModules shaders) {
+    // 32 seems to enough
     std::vector<PushDescriptorBinding> stages(32);
 
     for (const auto& shader : shaders) {
@@ -242,6 +243,8 @@ std::vector<PushDescriptorBinding> GetPushDesciptorBindingStages(ShaderModules s
             if (var.second.storage_class != SpvStorageClassUniform)
                 continue;
             auto& binding = stages[var.second.binding.value()];
+            // check dupliated binding
+            ASSERT((binding.flags & flag) == binding.flags);
             binding.flags |= flag;
             if (var.second.storage_class == SpvStorageClassUniform) 
                 binding.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;

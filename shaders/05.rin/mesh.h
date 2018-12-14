@@ -9,27 +9,9 @@ struct GraphicsData
     mat4x4 project;
 };
 
-struct MeshDraw
-{
-    vec3 position;
-    float scale;
-    vec4 orientation;
-    vec3 center;
-    float radius;
-    uint index_count;
-    uint meshlet_offset;
-    uint meshlet_count;
-    uint pad;
-};
-
-struct MeshletDraw
-{
-    vec3 center;
-    float radius;
-    uint index_offset;
-    uint index_count;
-    i8vec4 cone;
-    uint pad[1];
+struct MeshletCall {
+    uint mesh_id;
+    uint index;
 };
 
 // Aka. VkDrawIndexedIndirectCommand
@@ -40,6 +22,29 @@ struct MeshDrawCommand
     uint first_index;
     uint vertex_offset;
     uint first_instance;
+};
+
+struct MeshDraw
+{
+    vec3 position;
+    float scale;
+    vec4 orientation;
+    vec3 center;
+    float radius;
+    uint index_count;
+    uint meshlet_offset;
+    uint meshlet_count;
+    uint pad[1];
+};
+
+struct MeshletDraw
+{
+    vec3 center;
+    float radius;
+    uint index_offset;
+    uint index_count;
+    i8vec4 cone;
+    uint pad[1];
 };
 
 struct CullingData

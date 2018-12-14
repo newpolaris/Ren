@@ -7,8 +7,6 @@
 
 #include "mesh.h"
 
-#define USE_BALLOT 0
-
 layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 layout(push_constant) uniform param_block {
@@ -19,11 +17,16 @@ layout(binding = 0) readonly buffer MeshDraws {
     MeshDraw mesh_draws[];
 };
 
-layout(binding = 1) writeonly buffer MeshDrawCommands {
-    MeshDrawCommand commands[];
+layout(binding = 1) buffer MeshletIndexs {
+	MeshletCall meshlet_indices[];
 };
-layout(binding = 2) writeonly buffer DrawCommandCount {
-	uint draw_command_count;
+
+layout(binding = 2) buffer DISTACH_COUNT {
+	uint dispatch_count;
+};
+
+layout(binding = 3) buffer DISTACH_CALL {
+	uint dispatch_call[];
 };
 
 void main() {
@@ -42,25 +45,19 @@ void main() {
     for (uint i = 0; i < 6; i++) 
         cull = cull || (dot(constant.frustum[i], vec4(center, 1.0)) <= -radius);
 
-#if USE_BALLOT
-    uvec4 vote = subgroupBallot(!cull);    
-    uint count = subgroupBallotBitCount(vote);
-    if (count == 0)
-        return;
-    uint group_start = 0;
-    if (ti == 0)
-        group_start = atomicAdd(draw_command_count, count);
-    uint index = subgroupBallotExclusiveBitCount(vote);
-    uint base = subgroupBroadcastFirst(group_start) + index;
-    if (cull) return;
-#else
-    if (cull) return;
-    uint base = atomicAdd(draw_command_count, 1);
-#endif
+    if (!cull)
+    {
+        uint base = atomicAdd(dispatch_count, draw.meshlet_count);
 
-    commands[base].index_count = mesh_draws[dti].index_count;
-    commands[base].instance_count = 1;
-    commands[base].first_index = 0;
-    commands[base].vertex_offset = 0;
-    commands[base].first_instance = dti;
+        for (uint i = 0; i < draw.meshlet_count; i++) {
+            meshlet_indices[base + i].mesh_id = dti;
+            meshlet_indices[base + i].index = i;
+        }
+    }
+
+    if (dti == 0) {
+        dispatch_call[0] = (1987*318 + 31) / 32;
+        dispatch_call[1] = 1;
+        dispatch_call[2] = 1;
+    }
 }
