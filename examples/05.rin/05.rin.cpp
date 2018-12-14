@@ -335,16 +335,16 @@ int main() {
 
     std::default_random_engine eng {10};
     std::uniform_real_distribution<float> urd(0, 1);
-    const uint32_t draw_count = 2000;
+    const uint32_t draw_count = 4000;
     std::vector<MeshDraw> draws(draw_count);
     for (uint32_t i = 0; i < draw_count; i++) {
         vec3 axis = vec3( urd(eng)*2 - 1, urd(eng)*2 - 1, urd(eng)*2 - 1);
         float angle = glm::radians(urd(eng) * 90.f);
 
-        draws[i].position[0] = urd(eng) * 20.f - 10.f;
-        draws[i].position[1] = urd(eng) * 20.f - 10.f;
-        draws[i].position[2] = urd(eng) * 20.f - 10.f;
-        draws[i].scale = urd(eng) + 0.5f;
+        draws[i].position[0] = urd(eng) * 40.f - 20.f;
+        draws[i].position[1] = urd(eng) * 40.f - 20.f;
+        draws[i].position[2] = urd(eng) * 40.f - 20.f;
+        draws[i].scale = urd(eng) + 1.0f;
         draws[i].orientation = glm::rotate(quat(1, 0, 0, 0), angle, axis); 
         draws[i].index_count = static_cast<uint32_t>(mesh.indices.size());
         draws[i].center = mesh.center;

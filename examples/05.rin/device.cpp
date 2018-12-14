@@ -150,8 +150,10 @@ VkInstance CreateInstance(const char* ApplicationName, const char* EngineName) {
 
     VkInstanceCreateInfo info = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
     info.pApplicationInfo = &app_info;
+    #ifdef _DEBUG
     info.enabledLayerCount = ARRAY_SIZE(validation_layers);
     info.ppEnabledLayerNames = validation_layers;
+    #endif
     info.enabledExtensionCount = ARRAY_SIZE(extension_names);
     info.ppEnabledExtensionNames = extension_names;
 
