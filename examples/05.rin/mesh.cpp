@@ -70,63 +70,64 @@ Mesh LoadMesh(const std::string& filename) {
     for (auto& v : vertices)
         radius = glm::max(radius,  glm::distance(glm::vec3(v.x, v.y, v.z), center));
 
-    return Mesh { center, radius, vertices, indices };
+    return Mesh { center, radius, 0, vertices, indices };
 }
 
-std::vector<Meshlet> BuildMeshlets(const Mesh& mesh) {
+void BuildMeshlets(Mesh* mesh) {
     size_t max_vertices = kMeshVertices;
     size_t max_triangles = kMeshTriangles;
 
-    auto length = meshopt_buildMeshletsBound(mesh.indices.size(), max_vertices, max_triangles);
+    auto length = meshopt_buildMeshletsBound(mesh->indices.size(), max_vertices, max_triangles);
     auto meshlets = std::vector<meshopt_Meshlet>(length);
                             
-    meshlets.resize(meshopt_buildMeshlets(meshlets.data(), mesh.indices.data(), mesh.indices.size(), 
-                                          mesh.vertices.size(), max_vertices, max_triangles));
+    meshlets.resize(meshopt_buildMeshlets(meshlets.data(), mesh->indices.data(), mesh->indices.size(), 
+                                          mesh->vertices.size(), max_vertices, max_triangles));
 
-    static_assert(std::is_trivial<Meshlet>::value &&
-                  std::is_standard_layout<Meshlet>::value &&
+    static_assert(std::is_trivial<MeshletData>::value &&
+                  std::is_standard_layout<MeshletData>::value &&
                   std::is_trivial<meshopt_Meshlet>::value &&
                   std::is_standard_layout<meshopt_Meshlet>::value, "memcpy requirement");
 
-    std::vector<Meshlet> meshlet_result;
     for (auto& meshlet : meshlets) {
-        Meshlet m = {};
+        MeshletData m = {};
         static_assert(std::is_same<decltype(m.vertices), decltype(meshlet.vertices)>::value, "memcpy requires same type");
         static_assert(sizeof(m.indices[0]) == sizeof(meshlet.indices[0][0]), "memcpy requires same type");
         memcpy(m.vertices, meshlet.vertices, sizeof(m.vertices));
         memcpy(m.indices, meshlet.indices, sizeof(m.indices));
 
-        m.triangle_count = meshlet.triangle_count;
-        m.vertex_count = meshlet.vertex_count;
-
-        meshopt_Bounds bounds = meshopt_computeMeshletBounds(meshlet, &mesh.vertices[0].x, mesh.vertices.size(),
+        meshopt_Bounds bounds = meshopt_computeMeshletBounds(meshlet, &mesh->vertices[0].x, mesh->vertices.size(),
                                                              sizeof(Vertex));
 
-        m.center = glm::vec3(bounds.center[0], bounds.center[1], bounds.center[2]);
-        m.radius = bounds.radius;
+        mesh->meshletdata.push_back(m);
 
-        m.cone[0] = bounds.cone_axis_s8[0];
-        m.cone[1] = bounds.cone_axis_s8[1];
-        m.cone[2] = bounds.cone_axis_s8[2];
-        m.cone[3] = bounds.cone_cutoff_s8;
+        Meshlet draws = {};
+        draws.center = glm::vec3(bounds.center[0], bounds.center[1], bounds.center[2]);
+        draws.radius = bounds.radius;
 
-        meshlet_result.push_back(m);
+        draws.cone[0] = bounds.cone_axis_s8[0];
+        draws.cone[1] = bounds.cone_axis_s8[1];
+        draws.cone[2] = bounds.cone_axis_s8[2];
+        draws.cone[3] = bounds.cone_cutoff_s8;
+
+        draws.triangle_count = meshlet.triangle_count;
+        draws.vertex_count = meshlet.vertex_count;
+
+        mesh->meshlets.push_back(draws);
     }
     // TODO: 32 packing required when mesh shader enabled
-
-    return std::move(meshlet_result);
 }
 
 // TODO: remove function and indirect access in vertex shader?
 void BuildMeshletIndices(Mesh* mesh) {
     uint32_t cnt = 0;
     std::vector<uint32_t> meshlet_indices(mesh->indices.size());
-    for (auto& meshlet : mesh->meshlets) {
+    for (size_t i = 0; i < mesh->meshlets.size(); i++) {
+        const auto& meshlet = mesh->meshlets[i];
+        const auto& meshletdata = mesh->meshletdata[i];
         uint32_t start = cnt;
         for (uint32_t k = 0; k < uint32_t(meshlet.triangle_count) * 3; k++)
-            meshlet_indices[cnt++] = meshlet.vertices[meshlet.indices[k]];
-        meshlet.index_offset = start;
-        meshlet.index_count = cnt - start;
+            meshlet_indices[cnt++] = meshletdata.vertices[meshletdata.indices[k]];
+        mesh->meshlets[i].index_offset = start;
     }
     mesh->meshlet_indices = meshlet_indices;
 }

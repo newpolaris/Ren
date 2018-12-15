@@ -34,20 +34,20 @@ struct MeshDraw
     vec4 orientation;
     vec3 center;
     float radius;
-    uint index_count;
+    uint index_base;
     uint meshlet_offset;
     uint meshlet_count;
     uint pad[1];
 };
 
-struct MeshletDraw
+struct Meshlet
 {
     vec3 center;
     float radius;
     uint index_offset;
-    uint index_count;
     i8vec4 cone;
-    uint pad[1];
+    uint8_t vertex_count;
+    uint8_t triangle_count;
 };
 
 struct CullingData

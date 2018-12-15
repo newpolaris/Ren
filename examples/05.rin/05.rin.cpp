@@ -301,7 +301,7 @@ int main() {
     const char* objfile = "models/kitten.obj";
 
     Mesh mesh = LoadMesh(objfile);
-    mesh.meshlets = BuildMeshlets(mesh);
+    BuildMeshlets(&mesh);
     BuildMeshletIndices(&mesh);
 
     VkMemoryPropertyFlags device_local_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
@@ -346,11 +346,11 @@ int main() {
         draws[i].position[2] = urd(eng) * 40.f - 20.f;
         draws[i].scale = urd(eng) + 1.0f;
         draws[i].orientation = glm::rotate(quat(1, 0, 0, 0), angle, axis); 
-        draws[i].index_count = static_cast<uint32_t>(mesh.indices.size());
+        draws[i].index_base = mesh.index_base;
         draws[i].center = mesh.center;
         draws[i].radius = mesh.radius;
         draws[i].meshlet_offset = 0;
-        draws[i].meshlet_count = static_cast<uint32_t>(mesh.meshlets.size());
+        draws[i].meshlet_count = static_cast<uint32_t>(mesh.meshletdata.size());
     }
 
     const VkDeviceSize meshdrawbuffer_size = sizeof(MeshDraw) * draws.size();
@@ -359,25 +359,11 @@ int main() {
         device_local_flags, meshdrawbuffer_size });
     UploadBuffer(device, command_pool, command_queue, staging, meshdraw_buffer, meshdrawbuffer_size, draws.data());
 
-    std::vector<MeshletDraw> meshletdraws;
-    for (size_t i = 0; i < mesh.meshlets.size(); i++) {
-        MeshletDraw draws = {};
-        draws.center = mesh.meshlets[i].center;
-        draws.radius = mesh.meshlets[i].radius;
-        draws.index_offset = mesh.meshlets[i].index_offset;
-        draws.index_count = mesh.meshlets[i].index_count;
-        draws.cone[0] = mesh.meshlets[i].cone[0];
-        draws.cone[1] = mesh.meshlets[i].cone[1];
-        draws.cone[2] = mesh.meshlets[i].cone[2];
-        draws.cone[3] = mesh.meshlets[i].cone[3];
-        meshletdraws.emplace_back(std::move(draws));
-    }
-
-    const VkDeviceSize meshletdraw_buffer_size = sizeof(MeshletDraw) * meshletdraws.size();
+    const VkDeviceSize meshletdraw_buffer_size = sizeof(Meshlet) * mesh.meshlets.size();
     Buffer meshletdraw_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, meshletdraw_buffer_size });
-    UploadBuffer(device, command_pool, command_queue, staging, meshletdraw_buffer, meshletdraw_buffer_size, meshletdraws.data());
+    UploadBuffer(device, command_pool, command_queue, staging, meshletdraw_buffer, meshletdraw_buffer_size, mesh.meshlets.data());
 
     const uint32_t max_meshlet_count = 1000;
     const VkDeviceSize meshlet_indices_size = sizeof(uint32_t) * 2 * draws.size() * max_meshlet_count;
@@ -684,7 +670,7 @@ int main() {
 
         char title[256] = {};  
         sprintf(title, "wait: %.2f ms; cpu: %.2f ms; gpu: %.2f ms (cull %.2f %.2f %.2f); triangles %d; meshlets %d; %.1fB tri/sec clustercull %s",
-                wait_average, cpu_average, gpu_average, cull_time[0], cull_time[1], cull_time[2], triangle_count, mesh.meshlets.size(), trianglesPerSec,
+                wait_average, cpu_average, gpu_average, cull_time[0], cull_time[1], cull_time[2], triangle_count, mesh.meshletdata.size(), trianglesPerSec,
                 cluster_culling ? "ON" : "OFF");
         glfwSetWindowTitle(windows, title);
     }

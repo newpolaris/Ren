@@ -17,14 +17,14 @@ layout(binding = 0) readonly buffer MeshDraws {
 };
 
 layout(binding = 1) readonly buffer MeshletDraws {
-    MeshletDraw meshlets[];
+    Meshlet meshlets[];
 };
 
 layout(binding = 2) readonly buffer MeshletIndexs {
 	MeshletCall mesh_indices[];
 };
 
-layout(binding = 3) readonly buffer DISPATCH_COUNT_BUFFER {
+layout(binding = 3) readonly buffer DispatchCountBuffer {
 	uint dispatch_count_buffer;
 };
 
@@ -77,7 +77,7 @@ void main() {
 
     uint slot = atomicAdd(draw_command_count, 1);
 
-    commands[slot].index_count = meshlets[mi].index_count;
+    commands[slot].index_count = int(meshlets[mi].triangle_count) * 3;
     commands[slot].instance_count = 1;
     commands[slot].first_index = meshlets[mi].index_offset;
     commands[slot].vertex_offset = 0;
