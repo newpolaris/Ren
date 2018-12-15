@@ -302,7 +302,6 @@ int main() {
 
     Mesh mesh = LoadMesh(objfile);
     BuildMeshlets(&mesh);
-    BuildMeshletIndices(&mesh);
 
     VkMemoryPropertyFlags device_local_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     VkMemoryPropertyFlags host_memory_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
@@ -310,7 +309,7 @@ int main() {
 
     const VkDeviceSize vb_size = sizeof(Vertex)*mesh.vertices.size();
     const VkDeviceSize ib_size = sizeof(uint32_t)*mesh.indices.size();
-    const VkDeviceSize mib_size = mesh.meshlet_indices.size() * sizeof(uint32_t);
+    const VkDeviceSize meshletdata_size = mesh.meshletdata.size() * sizeof(MeshletData);
 
     Buffer staging = CreateBuffer(device, physical_properties.memory, { 
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host_memory_flags, 1024*1024*64});
@@ -323,13 +322,13 @@ int main() {
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, ib_size });
 
-    Buffer meshlet_index_buffer = CreateBuffer(device, physical_properties.memory, {
+    Buffer meshletdata_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        device_local_flags, mib_size });
+        device_local_flags, meshletdata_size });
 
     UploadBuffer(device, command_pool, command_queue, staging, vb, vb_size, mesh.vertices.data());
     UploadBuffer(device, command_pool, command_queue, staging, ib, ib_size, mesh.indices.data());
-    UploadBuffer(device, command_pool, command_queue, staging, meshlet_index_buffer, mib_size, mesh.meshlet_indices.data());
+    UploadBuffer(device, command_pool, command_queue, staging, meshletdata_buffer, meshletdata_size, mesh.meshletdata.data());
 
     VkQueryPool timestamp_pool = CreateQueryPool(device, VK_QUERY_TYPE_TIMESTAMP, 1024, 0);
 
@@ -572,7 +571,7 @@ int main() {
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        PushDescriptorSets descriptors[] = {vb, meshlet_index_buffer, meshdraw_buffer, meshletdraw_command_buffer};
+        PushDescriptorSets descriptors[] = {vb, meshdraw_buffer, meshlet_buffer, meshletdata_buffer, };
         vkCmdPushDescriptorSetWithTemplateKHR(cmd, mesh_program.update, mesh_program.layout, 0, &descriptors);
 
         vkCmdPushConstants(cmd, mesh_program.layout, mesh_program.push_constant_stages, 0, sizeof(graphics_data), &graphics_data);
@@ -681,7 +680,7 @@ int main() {
     DestroyBuffer(device, &staging);
     DestroyBuffer(device, &vb);
     DestroyBuffer(device, &ib);
-    DestroyBuffer(device, &meshlet_index_buffer);
+    DestroyBuffer(device, &meshletdata_buffer);
     DestroyBuffer(device, &meshdraw_buffer);
     DestroyBuffer(device, &meshlet_buffer);
     DestroyBuffer(device, &meshlet_indices_buffer);

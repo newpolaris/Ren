@@ -14,12 +14,16 @@ layout(binding = 0) readonly buffer Vertices {
     Vertex vertices[];
 };
 
-layout(binding = 1) readonly buffer Indices {
-    uint indices[];
+layout(binding = 1) readonly buffer MeshDraws {
+    MeshDraw mesh_draws[];
 };
 
-layout(binding = 2) readonly buffer MeshDraws {
-    MeshDraw mesh_draws[];
+layout(binding = 2) readonly buffer Meshlets {
+    Meshlet meshlets[];
+};
+
+layout(binding = 3) readonly buffer MeshletDatas {
+    MeshletData meshletdatas[];
 };
 
 layout(location = 0) out vec3 color;
@@ -29,10 +33,14 @@ vec3 rotate_position(vec4 quat, vec3 v) {
  }
 
 void main() {
-    MeshDraw draws = mesh_draws[gl_InstanceIndex];
+    MeshDraw draw = mesh_draws[gl_InstanceIndex];
 
-    uint index = gl_VertexIndex;
-    uint vertex_id = indices[index];
+    // encode meshlet_id with basevertarb 
+    uint meshlet_id = gl_BaseVertexARB;
+    uint index = gl_VertexIndex - gl_BaseVertexARB;
+
+    uint vertex_index = uint(meshletdatas[meshlet_id].indices[index]);
+    uint vertex_id = meshletdatas[meshlet_id].vertices[vertex_index];
 
     // To handle "Capability Int8 is not allowed by Vulkan 1.1 specification (or requires extension) OpCapability Int8"
     // Not allowed assignment / direct cast to float (allowed via int) (maybe? with/without both raise validation error)
@@ -41,5 +49,5 @@ void main() {
     vec2 texcoords = vec2(vertices[vertex_id].texcoords);
 
     color = vec3(normal) / 127.0 - 1.0;
-    gl_Position = constant.project * vec4(rotate_position(draws.orientation, position) * draws.scale + draws.position, 1.0);
+    gl_Position = constant.project * vec4(rotate_position(draw.orientation, position) * draw.scale + draw.position, 1.0);
 }

@@ -46,6 +46,12 @@ struct Meshlet
     uint8_t triangle_count;
 };
 
+struct MeshletData
+{
+    uint vertices[64];
+    uint8_t indices[126*3];
+};
+
 struct CullingData
 {
     vec4 frustum[6];

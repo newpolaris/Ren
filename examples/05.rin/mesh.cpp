@@ -116,18 +116,3 @@ void BuildMeshlets(Mesh* mesh) {
     }
     // TODO: 32 packing required when mesh shader enabled
 }
-
-// TODO: remove function and indirect access in vertex shader?
-void BuildMeshletIndices(Mesh* mesh) {
-    uint32_t cnt = 0;
-    std::vector<uint32_t> meshlet_indices(mesh->indices.size());
-    for (size_t i = 0; i < mesh->meshlets.size(); i++) {
-        const auto& meshlet = mesh->meshlets[i];
-        const auto& meshletdata = mesh->meshletdata[i];
-        uint32_t start = cnt;
-        for (uint32_t k = 0; k < uint32_t(meshlet.triangle_count) * 3; k++)
-            meshlet_indices[cnt++] = meshletdata.vertices[meshletdata.indices[k]];
-        mesh->meshlets[i].index_offset = start;
-    }
-    mesh->meshlet_indices = meshlet_indices;
-}
