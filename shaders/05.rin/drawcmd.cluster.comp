@@ -77,9 +77,8 @@ void main() {
 
     uint slot = atomicAdd(draw_command_count, 1);
 
-    commands[slot].index_count = int(meshlets[mi].triangle_count) * 3;
-    commands[slot].instance_count = 1;
-    commands[slot].first_index = meshlets[mi].index_offset;
-    commands[slot].vertex_offset = 0;
-    commands[slot].first_instance = mesh_id;
+    commands[slot].vertexCount = int(meshlets[mi].triangle_count) * 3;
+    commands[slot].instanceCount = 1;
+    commands[slot].firstVertex = meshlets[mi].index_offset;
+    commands[slot].firstInstance = mesh_id;
 }

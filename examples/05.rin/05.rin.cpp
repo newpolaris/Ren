@@ -324,7 +324,7 @@ int main() {
         device_local_flags, ib_size });
 
     Buffer meshlet_index_buffer = CreateBuffer(device, physical_properties.memory, {
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, mib_size });
 
     UploadBuffer(device, command_pool, command_queue, staging, vb, vb_size, mesh.vertices.data());
@@ -359,11 +359,11 @@ int main() {
         device_local_flags, meshdrawbuffer_size });
     UploadBuffer(device, command_pool, command_queue, staging, meshdraw_buffer, meshdrawbuffer_size, draws.data());
 
-    const VkDeviceSize meshletdraw_buffer_size = sizeof(Meshlet) * mesh.meshlets.size();
-    Buffer meshletdraw_buffer = CreateBuffer(device, physical_properties.memory, {
+    const VkDeviceSize meshlet_buffer_size = sizeof(Meshlet) * mesh.meshlets.size();
+    Buffer meshlet_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        device_local_flags, meshletdraw_buffer_size });
-    UploadBuffer(device, command_pool, command_queue, staging, meshletdraw_buffer, meshletdraw_buffer_size, mesh.meshlets.data());
+        device_local_flags, meshlet_buffer_size });
+    UploadBuffer(device, command_pool, command_queue, staging, meshlet_buffer, meshlet_buffer_size, mesh.meshlets.data());
 
     const uint32_t max_meshlet_count = 1000;
     const VkDeviceSize meshlet_indices_size = sizeof(uint32_t) * 2 * draws.size() * max_meshlet_count;
@@ -519,7 +519,7 @@ int main() {
                                       0, 0, 0, 1, &fill_barrier, 0, 0);
 
             PushDescriptorSets descriptors[] = { 
-                meshdraw_buffer, meshletdraw_buffer, meshlet_indices_buffer, 
+                meshdraw_buffer, meshlet_buffer, meshlet_indices_buffer, 
                 dispatch_count_buffer, meshletdraw_command_buffer, draw_counter_buffer, 
             };
             vkCmdPushDescriptorSetWithTemplateKHR(cmd, drawclustercmd_program.update, drawclustercmd_program.layout, 0, &descriptors);
@@ -572,14 +572,12 @@ int main() {
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        PushDescriptorSets descriptors[] = {vb, meshdraw_buffer, meshletdraw_command_buffer};
+        PushDescriptorSets descriptors[] = {vb, meshlet_index_buffer, meshdraw_buffer, meshletdraw_command_buffer};
         vkCmdPushDescriptorSetWithTemplateKHR(cmd, mesh_program.update, mesh_program.layout, 0, &descriptors);
 
-        vkCmdBindIndexBuffer(cmd, meshlet_index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-
         vkCmdPushConstants(cmd, mesh_program.layout, mesh_program.push_constant_stages, 0, sizeof(graphics_data), &graphics_data);
-        vkCmdDrawIndexedIndirectCountKHR(cmd, meshletdraw_command_buffer.buffer, 0, draw_counter_buffer.buffer, 0, 
-                                              max_command_count, sizeof(MeshDrawCommand));
+        vkCmdDrawIndirectCountKHR(cmd, meshletdraw_command_buffer.buffer, 0, draw_counter_buffer.buffer, 0, 
+                                       max_command_count, sizeof(MeshDrawCommand));
 
         vkCmdEndRenderPass(cmd);
 
@@ -685,7 +683,7 @@ int main() {
     DestroyBuffer(device, &ib);
     DestroyBuffer(device, &meshlet_index_buffer);
     DestroyBuffer(device, &meshdraw_buffer);
-    DestroyBuffer(device, &meshletdraw_buffer);
+    DestroyBuffer(device, &meshlet_buffer);
     DestroyBuffer(device, &meshlet_indices_buffer);
     DestroyBuffer(device, &meshletdraw_command_buffer);
     DestroyBuffer(device, &draw_counter_buffer);

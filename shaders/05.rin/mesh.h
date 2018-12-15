@@ -16,16 +16,12 @@ struct MeshletCall {
     uint index;
 };
 
-// Aka. VkDrawIndexedIndirectCommand
-struct MeshDrawCommand 
-{
-    uint index_count;
-    uint instance_count;
-    uint first_index;
-    uint vertex_offset;
-    uint first_instance;
+struct MeshDrawCommand {
+    uint vertexCount;
+    uint instanceCount;
+    uint firstVertex;
+    uint firstInstance;
 };
-
 
 struct MeshDraw
 {

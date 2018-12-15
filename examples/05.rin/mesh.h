@@ -25,11 +25,10 @@ struct alignas(16) Vertex
 };
 
 struct MeshDrawCommand {
-    uint32_t index_count;
-    uint32_t instance_count;
-    uint32_t first_index;
-    uint32_t vertex_offset;
-    uint32_t first_instance;
+    uint32_t vertexCount;
+    uint32_t instanceCount;
+    uint32_t firstVertex;
+    uint32_t firstInstance;
 };
 
 enum { kMeshVertices = 64 };
@@ -58,8 +57,8 @@ struct Mesh
     uint32_t index_base;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
-    std::vector<MeshletData> meshletdata;
     std::vector<Meshlet> meshlets;
+    std::vector<MeshletData> meshletdata;
     // meshlet indices for rendering mesh in standard vertex shader; just pre interpreted meshlet index look up
     std::vector<uint32_t> meshlet_indices;
 };
