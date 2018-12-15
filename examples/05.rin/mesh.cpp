@@ -23,16 +23,14 @@ float HalfToFloat(uint16_t v) {
     return (sign == 0 ? 1.f : -1.f) * ldexpf(float(man + 1024) / 1024.f, exp - 15);
 }
 
-Mesh LoadMesh(const std::string& filename)
-{
+Mesh LoadMesh(const std::string& filename) {
     ObjFile obj;
     objParseFile(obj, filename.c_str());
 
     size_t index_count = obj.f_size / 3;
     std::vector<Vertex> vertices(index_count);
 
-    for (size_t i = 0; i < index_count; i++)
-    {
+    for (size_t i = 0; i < index_count; i++) {
         Vertex& v = vertices[i];
 
         int vi = obj.f[i * 3 + 0];
@@ -51,7 +49,6 @@ Mesh LoadMesh(const std::string& filename)
     }
 
     std::vector<uint32_t> indices(index_count);
-
     std::vector<uint32_t> remap(index_count);
     size_t vertex_count = meshopt_generateVertexRemap(remap.data(), 0, index_count, 
                                                       vertices.data(), index_count, sizeof(Vertex));
@@ -80,8 +77,9 @@ std::vector<Meshlet> BuildMeshlets(const Mesh& mesh) {
     size_t max_vertices = kMeshVertices;
     size_t max_triangles = kMeshTriangles;
 
-    auto meshlets = std::vector<meshopt_Meshlet>(
-                            meshopt_buildMeshletsBound(mesh.indices.size(), max_vertices, max_triangles));
+    auto length = meshopt_buildMeshletsBound(mesh.indices.size(), max_vertices, max_triangles);
+    auto meshlets = std::vector<meshopt_Meshlet>(length);
+                            
     meshlets.resize(meshopt_buildMeshlets(meshlets.data(), mesh.indices.data(), mesh.indices.size(), 
                                           mesh.vertices.size(), max_vertices, max_triangles));
 
@@ -93,8 +91,11 @@ std::vector<Meshlet> BuildMeshlets(const Mesh& mesh) {
     std::vector<Meshlet> meshlet_result;
     for (auto& meshlet : meshlets) {
         Meshlet m = {};
+        static_assert(std::is_same<decltype(m.vertices), decltype(meshlet.vertices)>::value, "memcpy requires same type");
+        static_assert(sizeof(m.indices[0]) == sizeof(meshlet.indices[0][0]), "memcpy requires same type");
         memcpy(m.vertices, meshlet.vertices, sizeof(m.vertices));
         memcpy(m.indices, meshlet.indices, sizeof(m.indices));
+
         m.triangle_count = meshlet.triangle_count;
         m.vertex_count = meshlet.vertex_count;
 
@@ -111,7 +112,7 @@ std::vector<Meshlet> BuildMeshlets(const Mesh& mesh) {
 
         meshlet_result.push_back(m);
     }
-    // TODO: 32 packing
+    // TODO: 32 packing required when mesh shader enabled
 
     return std::move(meshlet_result);
 }

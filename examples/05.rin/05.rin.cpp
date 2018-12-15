@@ -449,13 +449,13 @@ int main() {
         } 
         ASSERT(result == VK_SUCCESS);
 
-        auto command_buffer = command_buffers[image_index];
+        auto cmd = command_buffers[image_index];
 
-        VK_ASSERT(vkResetCommandBuffer(command_buffer, 0));
+        VK_ASSERT(vkResetCommandBuffer(cmd, 0));
         VkCommandBufferBeginInfo begininfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-        VK_ASSERT(vkBeginCommandBuffer(command_buffer, &begininfo));
+        VK_ASSERT(vkBeginCommandBuffer(cmd, &begininfo));
 
-        vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 0);
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 0);
 
         float aspect = static_cast<float>(swapchain.extent.width) / swapchain.extent.height;
         const mat4x4 project = PerspectiveProjection(glm::radians(70.f), aspect, 0.01f);
@@ -472,72 +472,98 @@ int main() {
         const auto frustums = GetFrustum(project, max_draw_distance);
         for (uint32_t i = 0; i < 6; i++)
             culling_data.frustums[i] = frustums[i];
-
         {
             culling_data.draw_count = draw_count;
-            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 2);
+            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 2);
 
-            vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmd_pipeline);
-            vkCmdFillBuffer(command_buffer, dispatch_count_buffer.buffer, 0, 4, 0);
-            auto fill_barrier = CreateBufferBarrier(dispatch_count_buffer, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-            vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0, 1, &fill_barrier, 0, 0);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmd_pipeline);
+            vkCmdFillBuffer(cmd, dispatch_count_buffer.buffer, 0, 4, 0);
+            auto fill_barrier = CreateBufferBarrier(dispatch_count_buffer, 
+                                                    VK_ACCESS_TRANSFER_WRITE_BIT, 
+                                                    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, 
+                                      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                      0, 0, 0, 1, &fill_barrier, 0, 0);
 
             PushDescriptorSets descriptors[] = { meshdraw_buffer, meshlet_indices_buffer, dispatch_count_buffer };
-            vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, drawcmd_program.update, drawcmd_program.layout, 0, &descriptors);
+            vkCmdPushDescriptorSetWithTemplateKHR(cmd, drawcmd_program.update, drawcmd_program.layout, 
+                                                  0, &descriptors);
 
-            vkCmdPushConstants(command_buffer, drawcmd_program.layout, drawcmd_program.push_constant_stages, 0, sizeof(culling_data), &culling_data);
-            vkCmdDispatch(command_buffer, uint32_t((draw_count + 31) / 32), 1, 1);
+            vkCmdPushConstants(cmd, drawcmd_program.layout, drawcmd_program.push_constant_stages, 0, 
+                               sizeof(culling_data), &culling_data);
+
+            vkCmdDispatch(cmd, uint32_t((draw_count + 31) / 32), 1, 1);
 
             // Without barrier, first attempt that change culling status will result empty screen in few frames;
             VkBufferMemoryBarrier command_end[] = { 
                 CreateBufferBarrier(meshlet_indices_buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT),
                 CreateBufferBarrier(dispatch_count_buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT),
             };
-            vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0, ARRAY_SIZE(command_end), command_end, 0, 0);
-            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 3);
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
+                                      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                      0, 0, 0, ARRAY_SIZE(command_end), command_end, 0, 0);
+            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 3);
         }
         {
-            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 4);
-            vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmdindirect_pipeline);
+            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 4);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmdindirect_pipeline);
 
             PushDescriptorSets descriptors[] = { dispatch_count_buffer, dispatch_call_buffer };
-            vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, drawcmdindirect_program.update, drawcmdindirect_program.layout, 0, &descriptors);
+            vkCmdPushDescriptorSetWithTemplateKHR(cmd, drawcmdindirect_program.update, drawcmdindirect_program.layout, 0, &descriptors);
 
-            vkCmdDispatch(command_buffer, 1, 1, 1);
+            vkCmdDispatch(cmd, 1, 1, 1);
 
-            auto dispatch_call_barrier = CreateBufferBarrier(dispatch_call_buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
-            vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, 0, 1, &dispatch_call_barrier, 0, 0);
-            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 5);
+            auto dispatch_call_barrier = CreateBufferBarrier(dispatch_call_buffer, VK_ACCESS_SHADER_WRITE_BIT,
+                                                                                   VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
+                                      VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+                                      0, 0, 0, 1, &dispatch_call_barrier, 0, 0);
+            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 5);
         }
         {
-            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 6);
-            vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawclustercmd_pipeline);
-            vkCmdFillBuffer(command_buffer, draw_counter_buffer.buffer, 0, 4, 0);
+            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 6);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, drawclustercmd_pipeline);
+            vkCmdFillBuffer(cmd, draw_counter_buffer.buffer, 0, 4, 0);
 
-            auto fill_barrier = CreateBufferBarrier(draw_counter_buffer, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-            vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0, 1, &fill_barrier, 0, 0);
+            auto fill_barrier = CreateBufferBarrier(draw_counter_buffer, 
+                                                    VK_ACCESS_TRANSFER_WRITE_BIT,
+                                                    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, 
+                                      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                      0, 0, 0, 1, &fill_barrier, 0, 0);
 
-            PushDescriptorSets descriptors[] = { meshdraw_buffer, meshletdraw_buffer, meshlet_indices_buffer, dispatch_count_buffer, meshletdraw_command_buffer, draw_counter_buffer, };
-            vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, drawclustercmd_program.update, drawclustercmd_program.layout, 0, &descriptors);
+            PushDescriptorSets descriptors[] = { 
+                meshdraw_buffer, meshletdraw_buffer, meshlet_indices_buffer, 
+                dispatch_count_buffer, meshletdraw_command_buffer, draw_counter_buffer, 
+            };
+            vkCmdPushDescriptorSetWithTemplateKHR(cmd, drawclustercmd_program.update, drawclustercmd_program.layout, 0, &descriptors);
 
-            vkCmdDispatchIndirect(command_buffer, dispatch_call_buffer.buffer, 0);
+            vkCmdDispatchIndirect(cmd, dispatch_call_buffer.buffer, 0);
 
             // Without barrier, first attempt that change culling status will result empty screen in few frames;
             VkBufferMemoryBarrier command_end[] = { 
-                CreateBufferBarrier(meshletdraw_command_buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
-                CreateBufferBarrier(draw_counter_buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
+                CreateBufferBarrier(meshletdraw_command_buffer, VK_ACCESS_SHADER_WRITE_BIT, 
+                                                                VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
+                CreateBufferBarrier(draw_counter_buffer, VK_ACCESS_SHADER_WRITE_BIT,
+                                                         VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
             };
-            vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, 0, ARRAY_SIZE(command_end), command_end, 0, 0);
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
+                                      VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 
+                                      0, 0, 0, ARRAY_SIZE(command_end), command_end, 0, 0);
 
-            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 7);
+            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 7);
         }
 
         VkImageMemoryBarrier render_begin[] = {
-            CreateImageBarrier(color.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT),
-            CreateImageBarrier(depth.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT),
+            CreateImageBarrier(color.image, 0, 0, 
+                                            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                            VK_IMAGE_ASPECT_COLOR_BIT),
+            CreateImageBarrier(depth.image, 0, 0, 
+                                            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                            VK_IMAGE_ASPECT_DEPTH_BIT),
         };
 
-        vkCmdPipelineBarrier(command_buffer,
+        vkCmdPipelineBarrier(cmd,
             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
             VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr,
             ARRAY_SIZE(render_begin), render_begin);
@@ -555,27 +581,30 @@ int main() {
         pass.clearValueCount = ARRAY_SIZE(clear_values);
         pass.pClearValues = clear_values;
 
-        vkCmdBeginRenderPass(command_buffer, &pass, VK_SUBPASS_CONTENTS_INLINE);
-        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pipeline);
-        vkCmdSetViewport(command_buffer, 0, 1, &viewport);
-        vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+        vkCmdBeginRenderPass(cmd, &pass, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pipeline);
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
 
         PushDescriptorSets descriptors[] = {vb, meshdraw_buffer, meshletdraw_command_buffer};
-        vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, mesh_program.update, mesh_program.layout, 0, &descriptors);
+        vkCmdPushDescriptorSetWithTemplateKHR(cmd, mesh_program.update, mesh_program.layout, 0, &descriptors);
 
-        vkCmdBindIndexBuffer(command_buffer, meshlet_index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdBindIndexBuffer(cmd, meshlet_index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 
-        vkCmdPushConstants(command_buffer, mesh_program.layout, mesh_program.push_constant_stages, 0, sizeof(graphics_data), &graphics_data);
-        vkCmdDrawIndexedIndirectCountKHR(command_buffer, meshletdraw_command_buffer.buffer, 0, draw_counter_buffer.buffer, 0, max_command_count, sizeof(MeshDrawCommand));
+        vkCmdPushConstants(cmd, mesh_program.layout, mesh_program.push_constant_stages, 0, sizeof(graphics_data), &graphics_data);
+        vkCmdDrawIndexedIndirectCountKHR(cmd, meshletdraw_command_buffer.buffer, 0, draw_counter_buffer.buffer, 0, 
+                                              max_command_count, sizeof(MeshDrawCommand));
 
-        vkCmdEndRenderPass(command_buffer);
+        vkCmdEndRenderPass(cmd);
 
         VkImageMemoryBarrier copyBarriers[] = {
             CreateImageBarrier(swapchain.images[image_index], 0, VK_ACCESS_TRANSFER_WRITE_BIT, 
-                               VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT),
+                               VK_IMAGE_LAYOUT_UNDEFINED, 
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               VK_IMAGE_ASPECT_COLOR_BIT),
         };
 
-        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                              VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, ARRAYSIZE(copyBarriers), copyBarriers);
 
         // TODO: implement scale paste to swapchain
@@ -586,20 +615,22 @@ int main() {
         copy_region.dstSubresource.layerCount = 1;
         copy_region.extent = { swapchain.extent.width, swapchain.extent.height };
 
-        vkCmdCopyImage(command_buffer, color.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapchain.images[image_index],
+        vkCmdCopyImage(cmd, color.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapchain.images[image_index],
                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
 
         VkImageMemoryBarrier present = CreateImageBarrier(swapchain.images[image_index], 
-                                                          VK_ACCESS_TRANSFER_WRITE_BIT, 0, 
-                                                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                                                          VK_ACCESS_TRANSFER_WRITE_BIT, 
+                                                          0, 
+                                                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                                          VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
                                                           VK_IMAGE_ASPECT_COLOR_BIT);
 
-        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
                              VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, 1, &present);
 
-        vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 1);
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 1);
 
-        VK_ASSERT(vkEndCommandBuffer(command_buffer));
+        VK_ASSERT(vkEndCommandBuffer(cmd));
 
         VkPipelineStageFlags stage_flags[] = { VK_PIPELINE_STAGE_TRANSFER_BIT };
         VkSubmitInfo submit = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
@@ -609,7 +640,7 @@ int main() {
         submit.signalSemaphoreCount = 1;
         submit.pSignalSemaphores = &signal_semaphore;
         submit.commandBufferCount = 1;
-        submit.pCommandBuffers = &command_buffer;
+        submit.pCommandBuffers = &cmd;
 
         VK_ASSERT(vkResetFences(device, 1, &fence));
         VK_ASSERT(vkQueueSubmit(command_queue, 1, &submit, fence));

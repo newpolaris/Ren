@@ -1,11 +1,8 @@
+# Rin
 
-> TODO:
+Test vulkan renderer.
+The goal is to experiment with a rendering techniques, such as cone culling, spirv reflection, task/mesh shading which mentioned in youtube stream 'niagara'
 
-1. Modify recreate swap chain method to regenerate only necessary parts (remove pipeline)
-2. Create command buffer class
-3. Recompile shader that modified in the visual studio
-4. Remove glfw and add support to android
+# Issues
 
-> Reference:
-
-https://github.com/SaschaWillems/Vulkan/
+* NVidia GT 750m GPU cause VK_ERROR_DEVICE_LOST when vkCmdDrawIndexedIndirectCountKHR maxDrawCount is over 1'000'000 no mater what value is in counter buffer

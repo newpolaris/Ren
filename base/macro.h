@@ -3,19 +3,19 @@
 #ifndef ASSERT
 #define ASSERT(x) \
     do { \
-        if (!(x)) __assert(#x, __FILE__, __LINE__); \
+        if (!(x)) __assert(#x, 0, __FILE__, __LINE__); \
     } while(0)
 #endif
 #ifndef __assert
-#define __assert(e, file, line) \
-	((void)printf("%s:%u: failed assertion `%s'\n", file, line, e), abort())
+#define __assert(e, code, file, line) \
+	((void)printf("%s:%u: failed assertion '%s''%d'\n", file, line, e, code), abort())
 #endif
 
 #ifndef VK_ASSERT
 #define VK_ASSERT(x) \
     do { \
         VkResult result = x; \
-        ASSERT(VK_SUCCESS == result); \
+        if ((result != VK_SUCCESS)) __assert(#x, result, __FILE__, __LINE__); \
     } while(0)
 #endif
 
