@@ -364,8 +364,8 @@ int main() {
         MeshletDraw draws = {};
         draws.center = mesh.meshlets[i].center;
         draws.radius = mesh.meshlets[i].radius;
-        draws.index_offset = mesh.meshlet_instances[i].first;
-        draws.index_count = mesh.meshlet_instances[i].second;
+        draws.index_offset = mesh.meshlets[i].index_offset;
+        draws.index_count = mesh.meshlets[i].index_count;
         draws.cone[0] = mesh.meshlets[i].cone[0];
         draws.cone[1] = mesh.meshlets[i].cone[1];
         draws.cone[2] = mesh.meshlets[i].cone[2];

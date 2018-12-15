@@ -1,0 +1,28 @@
+#version 450
+
+#extension GL_EXT_shader_16bit_storage: require
+#extension GL_EXT_shader_8bit_storage: require
+#extension GL_KHR_shader_subgroup_ballot: require
+#extension GL_GOOGLE_include_directive: require 
+
+#include "mesh.h"
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(push_constant) uniform param_block {
+    uint pad;
+};
+
+layout(binding = 2) readonly buffer DISTACH_COUNT {
+	uint dispatch_count;
+};
+
+layout(binding = 3) writeonly buffer DISTACH_CALL {
+	uint dispatch_call[3];
+};
+
+void main() {
+    dispatch_call[0] = (dispatch_count*max_meshlet_count + 31) / 32;
+    dispatch_call[1] = 1;
+    dispatch_call[2] = 1;
+}

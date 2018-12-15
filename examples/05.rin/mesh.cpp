@@ -121,11 +121,12 @@ std::vector<Meshlet> BuildMeshlets(const Mesh& mesh) {
 void BuildMeshletIndices(Mesh* mesh) {
     uint32_t cnt = 0;
     std::vector<uint32_t> meshlet_indices(mesh->indices.size());
-    for (const auto& meshlet : mesh->meshlets) {
+    for (auto& meshlet : mesh->meshlets) {
         uint32_t start = cnt;
         for (uint32_t k = 0; k < uint32_t(meshlet.triangle_count) * 3; k++)
             meshlet_indices[cnt++] = meshlet.vertices[meshlet.indices[k]];
-        mesh->meshlet_instances.push_back({start, cnt - start});
+        meshlet.index_offset = start;
+        meshlet.index_count = cnt - start;
     }
     mesh->meshlet_indices = meshlet_indices;
 }

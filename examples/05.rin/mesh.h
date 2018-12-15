@@ -35,15 +35,17 @@ struct MeshDrawCommand {
 enum { kMeshVertices = 64 };
 enum { kMeshTriangles = 126 };
 
-struct Meshlet
+struct alignas(16) Meshlet
 {
     vec3 center;
     float radius;
-    int8_t cone[4];
     uint32_t vertices[kMeshVertices]; // save reference index of global vertex index
     uint8_t indices[kMeshTriangles*3];
     uint8_t vertex_count;
     uint8_t triangle_count;
+    int8_t cone[4];
+    uint32_t index_offset;
+    uint32_t index_count;
 };
 
 struct alignas(16) MeshletDraw
@@ -64,8 +66,6 @@ struct Mesh
     std::vector<Meshlet> meshlets;
     // meshlet indices for rendering mesh in standard vertex shader; just pre interpreted meshlet index look up
     std::vector<uint32_t> meshlet_indices;
-    // devide meshlet_indices per meshlet instance
-    std::vector<std::pair<uint32_t, uint32_t>> meshlet_instances;
 };
 
 Mesh LoadMesh(const std::string& filename);
