@@ -21,7 +21,7 @@ layout(binding = 1) readonly buffer MeshletDraws {
 };
 
 layout(binding = 2) readonly buffer MeshletIndexs {
-	MeshletCall meshlet_indices[];
+	MeshletCall mesh_indices[];
 };
 
 layout(binding = 3) readonly buffer DISPATCH_COUNT_BUFFER {
@@ -55,12 +55,15 @@ void main() {
     uint gi = gl_WorkGroupID.x; // SV_GroupID	
     uint dti = gl_GlobalInvocationID.x; // SV_DispatchThreadID
 
-    if (dti >= dispatch_count_buffer) return;
+    if (dti >= dispatch_count_buffer*max_meshlet_count) return;
 
-    uint mesh_index = meshlet_indices[dti].mesh_id;
-    uint mi = meshlet_indices[dti].index;
+    uint mesh_index = dti / max_meshlet_count;
+    uint mesh_id = mesh_indices[mesh_index].mesh_id;
 
-    MeshDraw draw = draws[mesh_index];
+    MeshDraw draw = draws[mesh_id];
+    uint mi = dti % max_meshlet_count;
+    if (mi >= draw.meshlet_count) return;
+    mi = mi + draw.meshlet_offset;
 
     vec3 center = RotateQuat(meshlets[mi].center, draw.orientation) * draw.scale + draw.position;
     float radius = meshlets[mi].radius * draw.scale;
@@ -78,5 +81,5 @@ void main() {
     commands[slot].instance_count = 1;
     commands[slot].first_index = meshlets[mi].index_offset;
     commands[slot].vertex_offset = 0;
-    commands[slot].first_instance = mesh_index;
+    commands[slot].first_instance = mesh_id;
 }

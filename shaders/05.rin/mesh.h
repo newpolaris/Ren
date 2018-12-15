@@ -1,3 +1,5 @@
+const uint max_meshlet_count = 1000;
+
 struct Vertex {
     vec3 position;
     u8vec3 normal;
@@ -23,6 +25,7 @@ struct MeshDrawCommand
     uint vertex_offset;
     uint first_instance;
 };
+
 
 struct MeshDraw
 {

@@ -43,11 +43,7 @@ void main() {
 
     if (!cull)
     {
-        uint base = atomicAdd(dispatch_count, draw.meshlet_count);
-
-        for (uint i = 0; i < draw.meshlet_count; i++) {
-            meshlet_indices[base + i].mesh_id = dti;
-            meshlet_indices[base + i].index = i;
-        }
+        uint base = atomicAdd(dispatch_count, 1);
+        meshlet_indices[base].mesh_id = dti;
     }
 }
