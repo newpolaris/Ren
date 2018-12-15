@@ -17,16 +17,12 @@ layout(binding = 0) readonly buffer MeshDraws {
     MeshDraw mesh_draws[];
 };
 
-layout(binding = 1) buffer MeshletIndexs {
+layout(binding = 1) writeonly buffer MeshletIndexs {
 	MeshletCall meshlet_indices[];
 };
 
-layout(binding = 2) buffer DISTACH_COUNT {
+layout(binding = 2) writeonly buffer DISTACH_COUNT {
 	uint dispatch_count;
-};
-
-layout(binding = 3) buffer DISTACH_CALL {
-	uint dispatch_call[];
 };
 
 void main() {
@@ -53,11 +49,5 @@ void main() {
             meshlet_indices[base + i].mesh_id = dti;
             meshlet_indices[base + i].index = i;
         }
-    }
-
-    if (dti == 0) {
-        dispatch_call[0] = (1987*318 + 31) / 32;
-        dispatch_call[1] = 1;
-        dispatch_call[2] = 1;
     }
 }

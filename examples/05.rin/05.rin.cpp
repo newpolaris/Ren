@@ -264,9 +264,13 @@ int main() {
     Program drawcmd_program = CreateProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, {drawcmd_shader});
     VkPipeline drawcmd_pipeline = CreateComputePipeline(device, drawcmd_program.layout, drawcmd_shader);
 
-    ShaderModule drawclustercmd_shader  = CreateShaderModule(device, "shaders/05.rin/drawcmd.cluster.comp.spv");
+    ShaderModule drawclustercmd_shader = CreateShaderModule(device, "shaders/05.rin/drawcmd.cluster.comp.spv");
     Program drawclustercmd_program = CreateProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, {drawclustercmd_shader});
     VkPipeline drawclustercmd_pipeline = CreateComputePipeline(device, drawclustercmd_program.layout, drawclustercmd_shader);
+
+    ShaderModule drawcmdindirect_shader = CreateShaderModule(device, "shaders/05.rin/drawcmd.indirect.comp.spv");
+    Program drawcmdindirect_program = CreateProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, {drawcmdindirect_shader});
+    VkPipeline drawcmdindirect_pipeline = CreateComputePipeline(device, drawcmdindirect_program.layout, drawcmdindirect_shader);
 
     ShaderModule vertex_shader = CreateShaderModule(device, "shaders/05.rin/base.vert.spv");
     ShaderModule fragment_shader = CreateShaderModule(device, "shaders/05.rin/base.frag.spv");
@@ -478,7 +482,7 @@ int main() {
             auto fill_barrier = CreateBufferBarrier(dispatch_count_buffer, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
             vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0, 1, &fill_barrier, 0, 0);
 
-            PushDescriptorSets descriptors[] = { meshdraw_buffer, meshlet_indices_buffer, dispatch_count_buffer, dispatch_call_buffer };
+            PushDescriptorSets descriptors[] = { meshdraw_buffer, meshlet_indices_buffer, dispatch_count_buffer };
             vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, drawcmd_program.update, drawcmd_program.layout, 0, &descriptors);
 
             vkCmdPushConstants(command_buffer, drawcmd_program.layout, drawcmd_program.push_constant_stages, 0, sizeof(culling_data), &culling_data);
@@ -490,11 +494,23 @@ int main() {
                 CreateBufferBarrier(dispatch_count_buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT),
             };
             vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0, ARRAY_SIZE(command_end), command_end, 0, 0);
+            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 3);
+        }
+        {
+            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 4);
+            vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmdindirect_pipeline);
+
+            PushDescriptorSets descriptors[] = { dispatch_count_buffer, dispatch_call_buffer };
+            vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, drawcmdindirect_program.update, drawcmdindirect_program.layout, 0, &descriptors);
+
+            vkCmdDispatch(command_buffer, 1, 1, 1);
 
             auto dispatch_call_barrier = CreateBufferBarrier(dispatch_call_buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
             vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, 0, 1, &dispatch_call_barrier, 0, 0);
+            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 5);
         }
         {
+            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 6);
             vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawclustercmd_pipeline);
             vkCmdFillBuffer(command_buffer, draw_counter_buffer.buffer, 0, 4, 0);
 
@@ -505,7 +521,6 @@ int main() {
             vkCmdPushDescriptorSetWithTemplateKHR(command_buffer, drawclustercmd_program.update, drawclustercmd_program.layout, 0, &descriptors);
 
             vkCmdDispatchIndirect(command_buffer, dispatch_call_buffer.buffer, 0);
-            // vkCmdDispatch(command_buffer, 8000, 1, 1);
 
             // Without barrier, first attempt that change culling status will result empty screen in few frames;
             VkBufferMemoryBarrier command_end[] = { 
@@ -514,7 +529,7 @@ int main() {
             };
             vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, 0, ARRAY_SIZE(command_end), command_end, 0, 0);
 
-            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 3);
+            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 7);
         }
 
         VkImageMemoryBarrier render_begin[] = {
@@ -615,7 +630,7 @@ int main() {
         VK_ASSERT(vkWaitForFences(device, 1, &fence, TRUE, ~0ull));
         auto wait_end = std::chrono::steady_clock::now();
 
-        uint64_t timestamps[4] = {};
+        uint64_t timestamps[8] = {};
         vkGetQueryPoolResults(device, timestamp_pool, 0, ARRAY_SIZE(timestamps), sizeof(timestamps), timestamps,
                               sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
 
@@ -623,7 +638,11 @@ int main() {
         auto cpu_time = std::chrono::duration<double, std::milli>(cpu_end - cpu_begin).count();
         auto gpu_scaler = physical_properties.properties.limits.timestampPeriod;
         auto gpu_time = static_cast<double>((timestamps[1] - timestamps[0]) * 1e-6) * gpu_scaler;
-        auto cull_time = static_cast<double>((timestamps[3] - timestamps[2]) * 1e-6) * gpu_scaler;
+        double cull_time[] = { 
+            static_cast<double>((timestamps[3] - timestamps[2]) * 1e-6) * gpu_scaler,
+            static_cast<double>((timestamps[5] - timestamps[4]) * 1e-6) * gpu_scaler,
+            static_cast<double>((timestamps[7] - timestamps[6]) * 1e-6) * gpu_scaler
+        };
 
         gpu_average = glm::mix(gpu_average, gpu_time, 0.05);
         cpu_average = glm::mix(cpu_average, cpu_time, 0.05);
@@ -633,8 +652,8 @@ int main() {
 		auto trianglesPerSec = double(draw_count) * double(triangle_count) / double(gpu_average * 1e-3) * 1e-9;
 
         char title[256] = {};  
-        sprintf(title, "wait: %.2f ms; cpu: %.2f ms; gpu: %.2f ms (cull %.2f ms); triangles %d; meshlets %d; %.1fB tri/sec clustercull %s",
-                wait_average, cpu_average, gpu_average, cull_time, triangle_count, mesh.meshlets.size(), trianglesPerSec,
+        sprintf(title, "wait: %.2f ms; cpu: %.2f ms; gpu: %.2f ms (cull %.2f %.2f %.2f); triangles %d; meshlets %d; %.1fB tri/sec clustercull %s",
+                wait_average, cpu_average, gpu_average, cull_time[0], cull_time[1], cull_time[2], triangle_count, mesh.meshlets.size(), trianglesPerSec,
                 cluster_culling ? "ON" : "OFF");
         glfwSetWindowTitle(windows, title);
     }
@@ -650,8 +669,11 @@ int main() {
     DestroyBuffer(device, &meshlet_index_buffer);
     DestroyBuffer(device, &meshdraw_buffer);
     DestroyBuffer(device, &meshletdraw_buffer);
+    DestroyBuffer(device, &meshlet_indices_buffer);
     DestroyBuffer(device, &meshletdraw_command_buffer);
     DestroyBuffer(device, &draw_counter_buffer);
+    DestroyBuffer(device, &dispatch_call_buffer);
+    DestroyBuffer(device, &dispatch_count_buffer);
 
     vkDestroyFramebuffer(device, framebuffer, nullptr);
 
@@ -667,6 +689,10 @@ int main() {
     vkDestroyPipeline(device, drawclustercmd_pipeline, nullptr);
     DestroyProgram(device, &drawclustercmd_program);
     vkDestroyShaderModule(device, drawclustercmd_shader.module, nullptr);
+
+    vkDestroyPipeline(device, drawcmdindirect_pipeline, nullptr);
+    DestroyProgram(device, &drawcmdindirect_program);
+    vkDestroyShaderModule(device, drawcmdindirect_shader.module, nullptr);
 
     vkDestroyPipeline(device, mesh_pipeline, nullptr);
     DestroyProgram(device, &mesh_program);
