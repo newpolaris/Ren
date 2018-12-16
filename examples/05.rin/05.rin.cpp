@@ -342,6 +342,7 @@ int main() {
 
     VkQueryPool timestamp_pool = CreateQueryPool(device, VK_QUERY_TYPE_TIMESTAMP, 1024, 0);
 
+    uint32_t total_index_count = 0;
     std::default_random_engine eng {10};
     std::uniform_real_distribution<float> urd(0, 1);
     const uint32_t draw_count = 4000;
@@ -363,7 +364,8 @@ int main() {
         draws[i].meshlet_offset = mesh.meshlet_offset; 
         draws[i].meshlet_count = mesh.meshlet_count;
         draws[i].index_offset = mesh.index_offset; 
-        draws[i].index_count = mesh.index_count; 
+        draws[i].index_count = mesh.index_count;
+        total_index_count += mesh.index_count;
     }
 
     const VkDeviceSize meshdrawbuffer_size = sizeof(MeshDraw) * draws.size();
@@ -716,12 +718,12 @@ int main() {
         cpu_average = glm::mix(cpu_average, cpu_time, 0.05);
         wait_average = glm::mix(wait_average, wait_time, 0.05);
 
-        auto triangle_count = static_cast<int>(geometry.indices.size() / 3);
-		auto trianglesPerSec = double(draw_count) * double(triangle_count) / double(gpu_average * 1e-3) * 1e-9;
+        auto triangle_count = static_cast<double>(total_index_count / 3 * 1e-6);
+		auto trianglesPerSec = triangle_count / double(gpu_average * 1e-3) * 1e-3;
 
         char title[256] = {};  
-        sprintf(title, "wait: %.2f ms; cpu: %.2f ms; gpu: %.2f ms (cull %.2f %.2f %.2f); triangles %d; meshlets %d; %.1fB tri/sec clustercull %s",
-                wait_average, cpu_average, gpu_average, cull_time[0], cull_time[1], cull_time[2], triangle_count, geometry.meshlets.size(), trianglesPerSec,
+        sprintf(title, "wait: %.2f ms; cpu: %.2f ms; gpu: %.2f ms (cull %.2f %.2f %.2f); triangles %.1f M; meshlets %d; %.1fB tri/sec clustercull %s",
+                wait_average, cpu_average, gpu_average, cull_time[0], cull_time[1], cull_time[2], triangle_count , geometry.meshlets.size(), trianglesPerSec,
                 cluster_culling ? "ON" : "OFF");
         glfwSetWindowTitle(windows, title);
     }
