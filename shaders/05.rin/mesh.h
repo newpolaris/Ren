@@ -11,11 +11,6 @@ struct GraphicsData
     mat4x4 project;
 };
 
-struct MeshletCall {
-    uint mesh_id;
-    uint index;
-};
-
 struct MeshDrawCommand {
     uint indexCount;
     uint instanceCount;

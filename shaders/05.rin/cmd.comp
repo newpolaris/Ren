@@ -24,6 +24,16 @@ layout(binding = 2) buffer DrawCommandCount {
 	uint draw_command_count;
 };
 
+bool Cull(MeshDraw draw) {
+    vec3 center = draw.scale * draw.center + draw.position;
+    float radius = draw.scale * draw.radius;
+
+    bool cull = false;
+    for (uint i = 0; i < 6; i++) 
+        cull = cull || (dot(constant.frustum[i], vec4(center, 1.0)) <= -radius);
+    return cull;
+}
+
 void main() {
     uint ti = gl_LocalInvocationID.x; // SV_GroupThreadID
     uint gi = gl_WorkGroupID.x; // SV_GroupID	
@@ -33,13 +43,7 @@ void main() {
         return;
 
     MeshDraw draw = draws[dti];
-    vec3 center = draw.scale * draw.center + draw.position;
-    float radius = draw.scale * draw.radius;
-
-    bool cull = false;
-    for (uint i = 0; i < 6; i++) 
-        cull = cull || (dot(constant.frustum[i], vec4(center, 1.0)) <= -radius);
-
+    bool cull = Cull(draw); 
     if (cull) return;
 
     uint slot = atomicAdd(draw_command_count, 1);

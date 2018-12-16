@@ -17,13 +17,23 @@ layout(binding = 0) readonly buffer MeshDraws {
     MeshDraw mesh_draws[];
 };
 
-layout(binding = 1) writeonly buffer MeshletIndexs {
-	MeshletCall meshlet_indices[];
+layout(binding = 1) writeonly buffer MeshIds {
+	uint mesh_ids[];
 };
 
 layout(binding = 2) writeonly buffer DispatchCount {
 	uint dispatch_count;
 };
+
+bool Cull(MeshDraw draw) {
+    vec3 center = draw.scale * draw.center + draw.position;
+    float radius = draw.scale * draw.radius;
+
+    bool cull = false;
+    for (uint i = 0; i < 6; i++) 
+        cull = cull || (dot(constant.frustum[i], vec4(center, 1.0)) <= -radius);
+    return cull;
+}
 
 void main() {
     uint ti = gl_LocalInvocationID.x; // SV_GroupThreadID
@@ -34,16 +44,11 @@ void main() {
         return;
 
     MeshDraw draw = mesh_draws[dti];
-    vec3 center = draw.scale * draw.center + draw.position;
-    float radius = draw.scale * draw.radius;
-
-    bool cull = false;
-    for (uint i = 0; i < 6; i++) 
-        cull = cull || (dot(constant.frustum[i], vec4(center, 1.0)) <= -radius);
+    bool cull = Cull(draw);
 
     if (!cull)
     {
         uint base = atomicAdd(dispatch_count, 1);
-        meshlet_indices[base].mesh_id = dti;
+        mesh_ids[base] = dti;
     }
 }

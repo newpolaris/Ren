@@ -8,10 +8,6 @@
 
 layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
-layout(push_constant) uniform param_block {
-    uint pad;
-};
-
 layout(binding = 0) readonly buffer MeshDraws {
     MeshDraw draws[];
 };
@@ -21,7 +17,7 @@ layout(binding = 1) readonly buffer MeshletDraws {
 };
 
 layout(binding = 2) readonly buffer MeshletIndexs {
-	MeshletCall mesh_indices[];
+	uint mesh_ids[];
 };
 
 layout(binding = 3) readonly buffer DispatchCountBuffer {
@@ -44,7 +40,7 @@ void main() {
     if (dti >= dispatch_count_buffer*max_meshlet_count) return;
 
     uint mesh_index = dti / max_meshlet_count;
-    uint mesh_id = mesh_indices[mesh_index].mesh_id;
+    uint mesh_id = mesh_ids[mesh_index];
 
     MeshDraw draw = draws[mesh_id];
     uint mi = dti % max_meshlet_count;

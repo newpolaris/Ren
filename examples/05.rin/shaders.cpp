@@ -440,11 +440,13 @@ VkDescriptorUpdateTemplate CreateDescriptorUpdateTemplate(VkDevice device,
 
 Program CreateProgram(VkDevice device, VkPipelineBindPoint bindpoint, ShaderModules shaders) {
     auto stages = GetPushDesciptorBindingStages(shaders);
-    auto ranges = GetPushConstantRangeUnion(shaders);
-    auto layout = CreatePipelineLayout(device, shaders, { ranges }, stages);
+    auto range = GetPushConstantRangeUnion(shaders);
+    std::vector<VkPushConstantRange> ranges;
+    if (range.size > 0) ranges.push_back(range);
+    auto layout = CreatePipelineLayout(device, shaders, ranges, stages);
     auto update = CreateDescriptorUpdateTemplate(device, bindpoint, layout, shaders);
 
-    return Program { layout, update, ranges.stageFlags };
+    return Program { layout, update, range.stageFlags };
 }
 
 void DestroyProgram(VkDevice device, Program* program) {

@@ -260,21 +260,21 @@ int main() {
     VkQueue present_queue = VK_NULL_HANDLE;
     vkGetDeviceQueue(device, surface_properties.queue_family_index, queue_index, &present_queue);
 
-    ShaderModule drawcmd_shader = CreateShaderModule(device, "shaders/05.rin/drawcmd.comp.spv");
-    Program drawcmd_program = CreateProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, {drawcmd_shader});
-    VkPipeline drawcmd_pipeline = CreateComputePipeline(device, drawcmd_program.layout, drawcmd_shader);
+    ShaderModule cmd_frustum_shader = CreateShaderModule(device, "shaders/05.rin/cmd.frustum.comp.spv");
+    Program cmd_frustum_program = CreateProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, {cmd_frustum_shader});
+    VkPipeline cmd_frustum_pipeline = CreateComputePipeline(device, cmd_frustum_program.layout, cmd_frustum_shader);
 
-    ShaderModule drawclustercmd_shader = CreateShaderModule(device, "shaders/05.rin/drawcmd.cluster.comp.spv");
-    Program drawclustercmd_program = CreateProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, {drawclustercmd_shader});
-    VkPipeline drawclustercmd_pipeline = CreateComputePipeline(device, drawclustercmd_program.layout, drawclustercmd_shader);
+    ShaderModule cmd_cluster_shader = CreateShaderModule(device, "shaders/05.rin/cmd.cluster.comp.spv");
+    Program cmd_cluster_program = CreateProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, {cmd_cluster_shader});
+    VkPipeline cmd_cluster_pipeline = CreateComputePipeline(device, cmd_cluster_program.layout, cmd_cluster_shader);
 
-    ShaderModule drawcmdindirect_shader = CreateShaderModule(device, "shaders/05.rin/drawcmd.indirect.comp.spv");
-    Program drawcmdindirect_program = CreateProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, {drawcmdindirect_shader});
-    VkPipeline drawcmdindirect_pipeline = CreateComputePipeline(device, drawcmdindirect_program.layout, drawcmdindirect_shader);
+    ShaderModule cmd_indirect_shader = CreateShaderModule(device, "shaders/05.rin/cmd.indirect.comp.spv");
+    Program cmd_indirect_program = CreateProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, {cmd_indirect_shader});
+    VkPipeline cmd_indirect_pipeline = CreateComputePipeline(device, cmd_indirect_program.layout, cmd_indirect_shader);
 
-    ShaderModule drawfrustumcmd_shader = CreateShaderModule(device, "shaders/05.rin/drawcmd.frustum.comp.spv");
-    Program drawfrustumcmd_program = CreateProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, {drawfrustumcmd_shader});
-    VkPipeline drawfrustumcmd_pipeline = CreateComputePipeline(device, drawfrustumcmd_program.layout, drawfrustumcmd_shader);
+    ShaderModule cmd_shader = CreateShaderModule(device, "shaders/05.rin/cmd.comp.spv");
+    Program cmd_program = CreateProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, {cmd_shader});
+    VkPipeline cmd_pipeline = CreateComputePipeline(device, cmd_program.layout, cmd_shader);
 
     ShaderModule vertex_shader = CreateShaderModule(device, "shaders/05.rin/base.vert.spv");
     ShaderModule fragment_shader = CreateShaderModule(device, "shaders/05.rin/base.frag.spv");
@@ -379,7 +379,7 @@ int main() {
     UploadBuffer(device, command_pool, command_queue, staging, meshlet_buffer, meshlet_buffer_size, geometry.meshlets.data());
 
     const uint32_t max_meshlet_count = 1000;
-    const VkDeviceSize meshlet_indices_size = sizeof(uint32_t) * 2 * draws.size() * max_meshlet_count;
+    const VkDeviceSize meshlet_indices_size = sizeof(uint32_t) * draws.size() * max_meshlet_count;
     Buffer meshlet_indices_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         device_local_flags, meshlet_indices_size });
@@ -476,7 +476,7 @@ int main() {
         if (cluster_culling) {
             vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 2);
 
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmd_pipeline);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cmd_frustum_pipeline);
             vkCmdFillBuffer(cmd, dispatch_count_buffer.buffer, 0, 4, 0);
             auto dispatch_count_barrier = CreateBufferBarrier(dispatch_count_buffer, 
                                                               VK_ACCESS_TRANSFER_WRITE_BIT, 
@@ -486,10 +486,10 @@ int main() {
                                       0, 0, 0, 1, &dispatch_count_barrier, 0, 0);
 
             PushDescriptorSets frustum_cull_descriptors[] = { meshdraw_buffer, meshlet_indices_buffer, dispatch_count_buffer };
-            vkCmdPushDescriptorSetWithTemplateKHR(cmd, drawcmd_program.update, drawcmd_program.layout, 
+            vkCmdPushDescriptorSetWithTemplateKHR(cmd, cmd_frustum_program.update, cmd_frustum_program.layout, 
                                                   0, &frustum_cull_descriptors);
 
-            vkCmdPushConstants(cmd, drawcmd_program.layout, drawcmd_program.push_constant_stages, 0, 
+            vkCmdPushConstants(cmd, cmd_frustum_program.layout, cmd_frustum_program.push_constant_stages, 0, 
                                sizeof(culling_data), &culling_data);
 
             vkCmdDispatch(cmd, uint32_t((draw_count + 31) / 32), 1, 1);
@@ -507,11 +507,11 @@ int main() {
             /* indirect arg gen */ 
 
             vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 4);
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmdindirect_pipeline);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cmd_indirect_pipeline);
 
             PushDescriptorSets indirect_descriptors[] = { dispatch_count_buffer, dispatch_call_buffer };
-            vkCmdPushDescriptorSetWithTemplateKHR(cmd, drawcmdindirect_program.update, 
-                                                       drawcmdindirect_program.layout,
+            vkCmdPushDescriptorSetWithTemplateKHR(cmd, cmd_indirect_program.update, 
+                                                       cmd_indirect_program.layout,
                                                        0, &indirect_descriptors);
 
             vkCmdDispatch(cmd, 1, 1, 1);
@@ -526,7 +526,7 @@ int main() {
             /* cluster culling */
 
             vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 6);
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, drawclustercmd_pipeline);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cmd_cluster_pipeline);
             vkCmdFillBuffer(cmd, draw_counter_buffer.buffer, 0, 4, 0);
 
             auto fill_barrier = CreateBufferBarrier(draw_counter_buffer, 
@@ -540,7 +540,7 @@ int main() {
                 meshdraw_buffer, meshlet_buffer, meshlet_indices_buffer, 
                 dispatch_count_buffer, draw_command_buffer, draw_counter_buffer, 
             };
-            vkCmdPushDescriptorSetWithTemplateKHR(cmd, drawclustercmd_program.update, drawclustercmd_program.layout, 0, &descriptors);
+            vkCmdPushDescriptorSetWithTemplateKHR(cmd, cmd_cluster_program.update, cmd_cluster_program.layout, 0, &descriptors);
 
             vkCmdDispatchIndirect(cmd, dispatch_call_buffer.buffer, 0);
 
@@ -558,7 +558,7 @@ int main() {
             vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 7);
         } else {
             vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 2);
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, drawfrustumcmd_pipeline);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cmd_pipeline);
             vkCmdFillBuffer(cmd, draw_counter_buffer.buffer, 0, 4, 0);
 
             auto fill_barrier = CreateBufferBarrier(draw_counter_buffer, 
@@ -568,13 +568,13 @@ int main() {
                                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                       0, 0, 0, 1, &fill_barrier, 0, 0);
 
-            vkCmdPushConstants(cmd, drawfrustumcmd_program.layout, drawfrustumcmd_program.push_constant_stages, 0, 
+            vkCmdPushConstants(cmd, cmd_program.layout, cmd_program.push_constant_stages, 0, 
                                sizeof(culling_data), &culling_data);
 
             PushDescriptorSets descriptors[] = { 
                 meshdraw_buffer, draw_command_buffer, draw_counter_buffer, 
             };
-            vkCmdPushDescriptorSetWithTemplateKHR(cmd, drawfrustumcmd_program.update, drawfrustumcmd_program.layout, 0, &descriptors);
+            vkCmdPushDescriptorSetWithTemplateKHR(cmd, cmd_program.update, cmd_program.layout, 0, &descriptors);
 
             vkCmdDispatch(cmd, (draw_count + 31) / 32, 1, 1);
 
@@ -750,17 +750,21 @@ int main() {
     
     vkDestroyQueryPool(device, timestamp_pool, nullptr);
 
-    vkDestroyPipeline(device, drawcmd_pipeline, nullptr);
-    DestroyProgram(device, &drawcmd_program);
-    vkDestroyShaderModule(device, drawcmd_shader.module, nullptr);
+    vkDestroyPipeline(device, cmd_pipeline, nullptr);
+    DestroyProgram(device, &cmd_program);
+    vkDestroyShaderModule(device, cmd_shader.module, nullptr);
 
-    vkDestroyPipeline(device, drawclustercmd_pipeline, nullptr);
-    DestroyProgram(device, &drawclustercmd_program);
-    vkDestroyShaderModule(device, drawclustercmd_shader.module, nullptr);
+    vkDestroyPipeline(device, cmd_frustum_pipeline, nullptr);
+    DestroyProgram(device, &cmd_frustum_program);
+    vkDestroyShaderModule(device, cmd_frustum_shader.module, nullptr);
 
-    vkDestroyPipeline(device, drawcmdindirect_pipeline, nullptr);
-    DestroyProgram(device, &drawcmdindirect_program);
-    vkDestroyShaderModule(device, drawcmdindirect_shader.module, nullptr);
+    vkDestroyPipeline(device, cmd_cluster_pipeline, nullptr);
+    DestroyProgram(device, &cmd_cluster_program);
+    vkDestroyShaderModule(device, cmd_cluster_shader.module, nullptr);
+
+    vkDestroyPipeline(device, cmd_indirect_pipeline, nullptr);
+    DestroyProgram(device, &cmd_indirect_program);
+    vkDestroyShaderModule(device, cmd_indirect_shader.module, nullptr);
 
     vkDestroyPipeline(device, mesh_pipeline, nullptr);
     DestroyProgram(device, &mesh_program);
