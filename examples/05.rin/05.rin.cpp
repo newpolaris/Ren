@@ -345,7 +345,7 @@ int main() {
     uint32_t total_index_count = 0;
     std::default_random_engine eng {10};
     std::uniform_real_distribution<float> urd(0, 1);
-    const uint32_t draw_count = 4000;
+    const uint32_t draw_count = 10000;
     std::vector<MeshDraw> draws(draw_count);
     for (uint32_t i = 0; i < draw_count; i++) {
         auto mesh_index = i % geometry.meshes.size();
@@ -356,7 +356,7 @@ int main() {
         draws[i].position[0] = urd(eng) * 40.f - 20.f;
         draws[i].position[1] = urd(eng) * 40.f - 20.f;
         draws[i].position[2] = urd(eng) * 40.f - 20.f;
-        draws[i].scale = urd(eng) + 1.0f;
+        draws[i].scale = urd(eng) + 0.5f;
         draws[i].orientation = glm::rotate(quat(1, 0, 0, 0), angle, axis); 
         draws[i].vertex_offset = mesh.vertex_offset;
         draws[i].center = mesh.center;
@@ -401,7 +401,7 @@ int main() {
 
     Buffer draw_counter_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        device_local_flags, sizeof(uint32_t)});
+        host_memory_flags, sizeof(uint32_t)});
 
     double cpu_average = 0.0, gpu_average = 0.0, wait_average = 0.0;
 

@@ -9,15 +9,11 @@
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
-layout(push_constant) uniform param_block {
-    uint pad;
-};
-
-layout(binding = 2) readonly buffer DISTACH_COUNT {
+layout(binding = 2) readonly buffer DispatchCount {
 	uint dispatch_count;
 };
 
-layout(binding = 3) writeonly buffer DISTACH_CALL {
+layout(binding = 3) writeonly buffer DispatchCall {
 	uint dispatch_call[3];
 };
 
