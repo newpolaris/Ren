@@ -2,7 +2,6 @@
 
 #extension GL_EXT_shader_16bit_storage: require
 #extension GL_EXT_shader_8bit_storage: require
-#extension GL_KHR_shader_subgroup_ballot: require
 #extension GL_GOOGLE_include_directive: require 
 
 #include "mesh.h"
@@ -14,15 +13,15 @@ layout(push_constant) uniform param_block {
 };
 
 layout(binding = 0) readonly buffer MeshDraws {
-    MeshDraw mesh_draws[];
+    MeshDraw draws[];
 };
 
-layout(binding = 1) writeonly buffer MeshletIndexs {
-	MeshletCall meshlet_indices[];
+layout(binding = 1) writeonly buffer MeshDrawCommands {
+    MeshDrawCommand commands[];
 };
 
-layout(binding = 2) writeonly buffer DispatchCount {
-	uint dispatch_count;
+layout(binding = 2) buffer DrawCommandCount {
+	uint draw_command_count;
 };
 
 void main() {
@@ -33,7 +32,7 @@ void main() {
     if (dti >= constant.draw_count)
         return;
 
-    MeshDraw draw = mesh_draws[dti];
+    MeshDraw draw = draws[dti];
     vec3 center = draw.scale * draw.center + draw.position;
     float radius = draw.scale * draw.radius;
 
@@ -41,9 +40,13 @@ void main() {
     for (uint i = 0; i < 6; i++) 
         cull = cull || (dot(constant.frustum[i], vec4(center, 1.0)) <= -radius);
 
-    if (!cull)
-    {
-        uint base = atomicAdd(dispatch_count, 1);
-        meshlet_indices[base].mesh_id = dti;
-    }
+    if (cull) return;
+
+    uint slot = atomicAdd(draw_command_count, 1);
+
+    commands[slot].indexCount = draw.index_count;
+    commands[slot].instanceCount = 1;
+    commands[slot].firstIndex = draw.index_offset;
+    commands[slot].firstInstance = dti;
+    commands[slot].vertexOffset = 0;
 }

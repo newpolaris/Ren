@@ -12,9 +12,11 @@ struct alignas(16) MeshDraw
     quat orientation;
     vec3 center;
     float radius;
-    uint32_t vertex_offset;
+    int32_t vertex_offset;
     uint32_t meshlet_offset;
     uint32_t meshlet_count;
+    uint32_t index_offset;
+    uint32_t index_count;
 };
 
 struct alignas(16) Vertex

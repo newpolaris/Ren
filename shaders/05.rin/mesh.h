@@ -31,10 +31,11 @@ struct MeshDraw
     vec4 orientation;
     vec3 center;
     float radius;
-    uint vertex_offset;
+    int vertex_offset;
     uint meshlet_offset;
     uint meshlet_count;
-    uint pad[1];
+    uint index_offset;
+    uint index_count;
 };
 
 struct Meshlet
@@ -59,3 +60,13 @@ struct CullingData
     uint draw_count;
     uint pad[3];
 };
+
+vec3 RotateQuat(vec3 v, vec4 q)
+{
+   return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
+}
+
+bool ConeCull(vec3 center, float radius, vec3 cone_axis, float cone_cutoff, vec3 camera_position)
+{
+    return dot(center - camera_position, cone_axis) >= cone_cutoff * length(center - camera_position) + radius;
+}

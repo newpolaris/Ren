@@ -36,20 +36,6 @@ layout(binding = 5) buffer DrawCommandCount {
 	uint draw_command_count;
 };
 
-bool ConeCull(vec4 cone, vec3 view) {
-    return dot(cone.xyz, view) > cone.w;
-}
-
-vec3 RotateQuat(vec3 v, vec4 q)
-{
-   return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
-}
-
-bool ConeCull(vec3 center, float radius, vec3 cone_axis, float cone_cutoff, vec3 camera_position)
-{
-    return dot(center - camera_position, cone_axis) >= cone_cutoff * length(center - camera_position) + radius;
-}
-
 void main() {
     uint ti = gl_LocalInvocationID.x; // SV_GroupThreadID
     uint gi = gl_WorkGroupID.x; // SV_GroupID	
@@ -81,4 +67,5 @@ void main() {
     commands[slot].instanceCount = 1;
     commands[slot].firstIndex = meshlets[mi].index_offset;
     commands[slot].firstInstance = mesh_id;
+    commands[slot].vertexOffset = 0;
 }
