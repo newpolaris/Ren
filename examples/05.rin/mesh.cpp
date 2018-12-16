@@ -23,7 +23,7 @@ float HalfToFloat(uint16_t v) {
     return (sign == 0 ? 1.f : -1.f) * ldexpf(float(man + 1024) / 1024.f, exp - 15);
 }
 
-Mesh LoadMesh(const std::string& filename) {
+void LoadMesh(const std::string& filename, Geometry* geometry) {
     ObjFile obj;
     objParseFile(obj, filename.c_str());
 
@@ -68,20 +68,35 @@ Mesh LoadMesh(const std::string& filename) {
         center += glm::vec3(v.x, v.y, v.z);
     center /= static_cast<float>(vertices.size());
     for (auto& v : vertices)
-        radius = glm::max(radius,  glm::distance(glm::vec3(v.x, v.y, v.z), center));
+        radius = glm::max(radius, glm::distance(glm::vec3(v.x, v.y, v.z), center));
 
-    return Mesh { center, radius, 0, vertices, indices };
-}
+    Mesh mesh = {};
+    mesh.center = center;
+    mesh.radius = radius;
+    mesh.vertex_offset = uint32_t(geometry->vertices.size());
+    mesh.vertex_count = uint32_t(vertices.size());
+    mesh.index_offset = uint32_t(geometry->indices.size());
+    mesh.index_count = uint32_t(indices.size());
+    mesh.meshlet_offset = uint32_t(geometry->meshlets.size());
 
-void BuildMeshlets(Mesh* mesh) {
+    geometry->vertices.insert(geometry->vertices.end(), 
+                             std::make_move_iterator(vertices.begin()), 
+                             std::make_move_iterator(vertices.end()));
+
+    geometry->indices.insert(geometry->indices.end(),
+                             std::make_move_iterator(indices.begin()), 
+                             std::make_move_iterator(indices.end()));
+
+    // meshlet build
     size_t max_vertices = kMeshVertices;
     size_t max_triangles = kMeshTriangles;
 
-    auto length = meshopt_buildMeshletsBound(mesh->indices.size(), max_vertices, max_triangles);
+    auto length = meshopt_buildMeshletsBound(indices.size(), max_vertices, max_triangles);
     auto meshlets = std::vector<meshopt_Meshlet>(length);
                             
-    meshlets.resize(meshopt_buildMeshlets(meshlets.data(), mesh->indices.data(), mesh->indices.size(), 
-                                          mesh->vertices.size(), max_vertices, max_triangles));
+    // TODO: not safe;
+    meshlets.resize(meshopt_buildMeshlets(meshlets.data(), indices.data(), indices.size(), 
+                                          vertices.size(), max_vertices, max_triangles));
 
     static_assert(std::is_trivial<MeshletData>::value &&
                   std::is_standard_layout<MeshletData>::value &&
@@ -95,10 +110,10 @@ void BuildMeshlets(Mesh* mesh) {
         memcpy(m.vertices, meshlet.vertices, sizeof(m.vertices));
         memcpy(m.indices, meshlet.indices, sizeof(m.indices));
 
-        meshopt_Bounds bounds = meshopt_computeMeshletBounds(meshlet, &mesh->vertices[0].x, mesh->vertices.size(),
+        meshopt_Bounds bounds = meshopt_computeMeshletBounds(meshlet, &vertices[0].x, vertices.size(),
                                                              sizeof(Vertex));
 
-        mesh->meshletdata.push_back(m);
+        geometry->meshletdata.push_back(m);
 
         Meshlet draws = {};
         draws.center = glm::vec3(bounds.center[0], bounds.center[1], bounds.center[2]);
@@ -112,7 +127,11 @@ void BuildMeshlets(Mesh* mesh) {
         draws.triangle_count = meshlet.triangle_count;
         draws.vertex_count = meshlet.vertex_count;
 
-        mesh->meshlets.push_back(draws);
+        geometry->meshlets.push_back(draws);
     }
     // TODO: 32 packing required when mesh shader enabled
+
+    mesh.meshlet_count = uint32_t(meshlets.size());
+
+    geometry->meshes.emplace_back(std::move(mesh));
 }

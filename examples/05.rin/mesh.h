@@ -12,7 +12,7 @@ struct alignas(16) MeshDraw
     quat orientation;
     vec3 center;
     float radius;
-    uint32_t index_base;
+    uint32_t vertex_offset;
     uint32_t meshlet_offset;
     uint32_t meshlet_count;
 };
@@ -54,12 +54,21 @@ struct Mesh
 {
     vec3 center;
     float radius;
-    uint32_t index_base;
+    uint32_t vertex_offset;
+    uint32_t vertex_count;
+    uint32_t index_offset;
+    uint32_t index_count;
+    uint32_t meshlet_offset;
+    uint32_t meshlet_count;
+};
+
+struct Geometry 
+{
+    std::vector<Mesh> meshes;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     std::vector<Meshlet> meshlets;
     std::vector<MeshletData> meshletdata;
 };
 
-Mesh LoadMesh(const std::string& filename);
-void BuildMeshlets(Mesh* mesh);
+void LoadMesh(const std::string& filename, Geometry* geometry);

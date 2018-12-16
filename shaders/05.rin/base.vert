@@ -35,18 +35,19 @@ vec3 rotate_position(vec4 quat, vec3 v) {
 void main() {
     MeshDraw draw = mesh_draws[gl_InstanceIndex];
 
-    // encode meshlet_id with basevertarb 
-    uint meshlet_id = gl_BaseVertexARB;
+    // encode meshlet_index with basevertarb 
+    uint meshlet_index = gl_BaseVertexARB;
     uint index = gl_VertexIndex - gl_BaseVertexARB;
 
-    uint vertex_index = uint(meshletdatas[meshlet_id].indices[index]);
-    uint vertex_id = meshletdatas[meshlet_id].vertices[vertex_index];
+    uint vertex_index = uint(meshletdatas[meshlet_index].indices[index]);
+    uint vertex_id = meshletdatas[meshlet_index].vertices[vertex_index];
+    uint global_vertex_id = draw.vertex_offset + vertex_id;
 
     // To handle "Capability Int8 is not allowed by Vulkan 1.1 specification (or requires extension) OpCapability Int8"
     // Not allowed assignment / direct cast to float (allowed via int) (maybe? with/without both raise validation error)
-    vec3 position = vec3(vertices[vertex_id].position); 
-    vec3 normal = vec3(uvec3(vertices[vertex_id].normal)); 
-    vec2 texcoords = vec2(vertices[vertex_id].texcoords);
+    vec3 position = vec3(vertices[global_vertex_id].position); 
+    vec3 normal = vec3(uvec3(vertices[global_vertex_id].normal)); 
+    vec2 texcoords = vec2(vertices[global_vertex_id].texcoords);
 
     color = vec3(normal) / 127.0 - 1.0;
     gl_Position = constant.project * vec4(rotate_position(draw.orientation, position) * draw.scale + draw.position, 1.0);

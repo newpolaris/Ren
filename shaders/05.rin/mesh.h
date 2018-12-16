@@ -30,7 +30,7 @@ struct MeshDraw
     vec4 orientation;
     vec3 center;
     float radius;
-    uint index_base;
+    uint vertex_offset;
     uint meshlet_offset;
     uint meshlet_count;
     uint pad[1];

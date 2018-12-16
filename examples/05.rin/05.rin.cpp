@@ -298,18 +298,24 @@ int main() {
     VkSemaphore semaphore = CreateSemaphore(device, 0);
     VkSemaphore signal_semaphore = CreateSemaphore(device, 0);
 
-    const char* objfile = "models/kitten.obj";
+    const char* objfiles[] = {
+        "models/kitten.obj",
+        "models/rabbit.obj",
+        "models/deer.obj",
+        "models/wolf.obj",
+    };
 
-    Mesh mesh = LoadMesh(objfile);
-    BuildMeshlets(&mesh);
+    Geometry geometry;
+    for (int i = 0 ; i < ARRAY_SIZE(objfiles); i++)
+        LoadMesh(objfiles[i], &geometry);
 
     VkMemoryPropertyFlags device_local_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     VkMemoryPropertyFlags host_memory_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
                                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT; 
 
-    const VkDeviceSize vb_size = sizeof(Vertex)*mesh.vertices.size();
-    const VkDeviceSize ib_size = sizeof(uint32_t)*mesh.indices.size();
-    const VkDeviceSize meshletdata_size = mesh.meshletdata.size() * sizeof(MeshletData);
+    const VkDeviceSize vb_size = sizeof(Vertex)*geometry.vertices.size();
+    const VkDeviceSize ib_size = sizeof(uint32_t)*geometry.indices.size();
+    const VkDeviceSize meshletdata_size = geometry.meshletdata.size() * sizeof(MeshletData);
 
     Buffer staging = CreateBuffer(device, physical_properties.memory, { 
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host_memory_flags, 1024*1024*64});
@@ -326,9 +332,9 @@ int main() {
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, meshletdata_size });
 
-    UploadBuffer(device, command_pool, command_queue, staging, vb, vb_size, mesh.vertices.data());
-    UploadBuffer(device, command_pool, command_queue, staging, ib, ib_size, mesh.indices.data());
-    UploadBuffer(device, command_pool, command_queue, staging, meshletdata_buffer, meshletdata_size, mesh.meshletdata.data());
+    UploadBuffer(device, command_pool, command_queue, staging, vb, vb_size, geometry.vertices.data());
+    UploadBuffer(device, command_pool, command_queue, staging, ib, ib_size, geometry.indices.data());
+    UploadBuffer(device, command_pool, command_queue, staging, meshletdata_buffer, meshletdata_size, geometry.meshletdata.data());
 
     VkQueryPool timestamp_pool = CreateQueryPool(device, VK_QUERY_TYPE_TIMESTAMP, 1024, 0);
 
@@ -337,6 +343,8 @@ int main() {
     const uint32_t draw_count = 4000;
     std::vector<MeshDraw> draws(draw_count);
     for (uint32_t i = 0; i < draw_count; i++) {
+        auto mesh_index = i % geometry.meshes.size();
+        const auto& mesh = geometry.meshes[mesh_index];
         vec3 axis = vec3( urd(eng)*2 - 1, urd(eng)*2 - 1, urd(eng)*2 - 1);
         float angle = glm::radians(urd(eng) * 90.f);
 
@@ -345,11 +353,11 @@ int main() {
         draws[i].position[2] = urd(eng) * 40.f - 20.f;
         draws[i].scale = urd(eng) + 1.0f;
         draws[i].orientation = glm::rotate(quat(1, 0, 0, 0), angle, axis); 
-        draws[i].index_base = mesh.index_base;
+        draws[i].vertex_offset = mesh.vertex_offset;
         draws[i].center = mesh.center;
         draws[i].radius = mesh.radius;
-        draws[i].meshlet_offset = 0;
-        draws[i].meshlet_count = static_cast<uint32_t>(mesh.meshletdata.size());
+        draws[i].meshlet_offset = mesh.meshlet_offset; 
+        draws[i].meshlet_count = mesh.meshlet_count;
     }
 
     const VkDeviceSize meshdrawbuffer_size = sizeof(MeshDraw) * draws.size();
@@ -358,11 +366,11 @@ int main() {
         device_local_flags, meshdrawbuffer_size });
     UploadBuffer(device, command_pool, command_queue, staging, meshdraw_buffer, meshdrawbuffer_size, draws.data());
 
-    const VkDeviceSize meshlet_buffer_size = sizeof(Meshlet) * mesh.meshlets.size();
+    const VkDeviceSize meshlet_buffer_size = sizeof(Meshlet) * geometry.meshlets.size();
     Buffer meshlet_buffer = CreateBuffer(device, physical_properties.memory, {
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         device_local_flags, meshlet_buffer_size });
-    UploadBuffer(device, command_pool, command_queue, staging, meshlet_buffer, meshlet_buffer_size, mesh.meshlets.data());
+    UploadBuffer(device, command_pool, command_queue, staging, meshlet_buffer, meshlet_buffer_size, geometry.meshlets.data());
 
     const uint32_t max_meshlet_count = 1000;
     const VkDeviceSize meshlet_indices_size = sizeof(uint32_t) * 2 * draws.size() * max_meshlet_count;
@@ -662,12 +670,12 @@ int main() {
         cpu_average = glm::mix(cpu_average, cpu_time, 0.05);
         wait_average = glm::mix(wait_average, wait_time, 0.05);
 
-        auto triangle_count = static_cast<int>(mesh.indices.size() / 3);
+        auto triangle_count = static_cast<int>(geometry.indices.size() / 3);
 		auto trianglesPerSec = double(draw_count) * double(triangle_count) / double(gpu_average * 1e-3) * 1e-9;
 
         char title[256] = {};  
         sprintf(title, "wait: %.2f ms; cpu: %.2f ms; gpu: %.2f ms (cull %.2f %.2f %.2f); triangles %d; meshlets %d; %.1fB tri/sec clustercull %s",
-                wait_average, cpu_average, gpu_average, cull_time[0], cull_time[1], cull_time[2], triangle_count, mesh.meshletdata.size(), trianglesPerSec,
+                wait_average, cpu_average, gpu_average, cull_time[0], cull_time[1], cull_time[2], triangle_count, geometry.meshlets.size(), trianglesPerSec,
                 cluster_culling ? "ON" : "OFF");
         glfwSetWindowTitle(windows, title);
     }
