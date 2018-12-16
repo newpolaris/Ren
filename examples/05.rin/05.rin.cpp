@@ -579,12 +579,13 @@ int main() {
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        PushDescriptorSets descriptors[] = {vb, meshdraw_buffer, meshlet_buffer, meshletdata_buffer, };
+        PushDescriptorSets descriptors[] = {vb, meshdraw_buffer };
         vkCmdPushDescriptorSetWithTemplateKHR(cmd, mesh_program.update, mesh_program.layout, 0, &descriptors);
 
+        vkCmdBindIndexBuffer(cmd, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
         vkCmdPushConstants(cmd, mesh_program.layout, mesh_program.push_constant_stages, 0, sizeof(graphics_data), &graphics_data);
-        vkCmdDrawIndirectCountKHR(cmd, meshletdraw_command_buffer.buffer, 0, draw_counter_buffer.buffer, 0, 
-                                       max_command_count, sizeof(MeshDrawCommand));
+        vkCmdDrawIndexedIndirectCountKHR(cmd, meshletdraw_command_buffer.buffer, 0, draw_counter_buffer.buffer, 0, 
+                                              max_command_count, sizeof(MeshDrawCommand));
 
         vkCmdEndRenderPass(cmd);
 

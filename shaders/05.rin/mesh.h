@@ -17,9 +17,10 @@ struct MeshletCall {
 };
 
 struct MeshDrawCommand {
-    uint vertexCount;
+    uint indexCount;
     uint instanceCount;
-    uint firstVertex;
+    uint firstIndex;
+    int vertexOffset;
     uint firstInstance;
 };
 

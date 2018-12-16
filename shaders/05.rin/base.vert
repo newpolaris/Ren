@@ -18,14 +18,6 @@ layout(binding = 1) readonly buffer MeshDraws {
     MeshDraw mesh_draws[];
 };
 
-layout(binding = 2) readonly buffer Meshlets {
-    Meshlet meshlets[];
-};
-
-layout(binding = 3) readonly buffer MeshletDatas {
-    MeshletData meshletdatas[];
-};
-
 layout(location = 0) out vec3 color;
 
 vec3 rotate_position(vec4 quat, vec3 v) {
@@ -35,12 +27,8 @@ vec3 rotate_position(vec4 quat, vec3 v) {
 void main() {
     MeshDraw draw = mesh_draws[gl_InstanceIndex];
 
-    // encode meshlet_index with basevertarb 
-    uint meshlet_index = gl_BaseVertexARB;
-    uint index = gl_VertexIndex - gl_BaseVertexARB;
+    uint vertex_id = gl_VertexIndex;
 
-    uint vertex_index = uint(meshletdatas[meshlet_index].indices[index]);
-    uint vertex_id = meshletdatas[meshlet_index].vertices[vertex_index];
     uint global_vertex_id = draw.vertex_offset + vertex_id;
 
     // To handle "Capability Int8 is not allowed by Vulkan 1.1 specification (or requires extension) OpCapability Int8"

@@ -103,31 +103,36 @@ void LoadMesh(const std::string& filename, Geometry* geometry) {
                   std::is_trivial<meshopt_Meshlet>::value &&
                   std::is_standard_layout<meshopt_Meshlet>::value, "memcpy requirement");
 
+    uint32_t index_offset = mesh.index_offset;
+
     for (auto& meshlet : meshlets) {
-        MeshletData m = {};
-        static_assert(std::is_same<decltype(m.vertices), decltype(meshlet.vertices)>::value, "memcpy requires same type");
-        static_assert(sizeof(m.indices[0]) == sizeof(meshlet.indices[0][0]), "memcpy requires same type");
-        memcpy(m.vertices, meshlet.vertices, sizeof(m.vertices));
-        memcpy(m.indices, meshlet.indices, sizeof(m.indices));
+        MeshletData data = {};
+        static_assert(std::is_same<decltype(data.vertices), decltype(meshlet.vertices)>::value, "memcpy requires same type");
+        static_assert(sizeof(data.indices[0]) == sizeof(meshlet.indices[0][0]), "memcpy requires same type");
+        memcpy(data.vertices, meshlet.vertices, sizeof(data.vertices));
+        memcpy(data.indices, meshlet.indices, sizeof(data.indices));
 
         meshopt_Bounds bounds = meshopt_computeMeshletBounds(meshlet, &vertices[0].x, vertices.size(),
                                                              sizeof(Vertex));
 
-        geometry->meshletdata.push_back(m);
+        geometry->meshletdata.push_back(data);
 
-        Meshlet draws = {};
-        draws.center = glm::vec3(bounds.center[0], bounds.center[1], bounds.center[2]);
-        draws.radius = bounds.radius;
+        Meshlet m = {};
+        m.center = glm::vec3(bounds.center[0], bounds.center[1], bounds.center[2]);
+        m.radius = bounds.radius;
 
-        draws.cone[0] = bounds.cone_axis_s8[0];
-        draws.cone[1] = bounds.cone_axis_s8[1];
-        draws.cone[2] = bounds.cone_axis_s8[2];
-        draws.cone[3] = bounds.cone_cutoff_s8;
+        m.cone[0] = bounds.cone_axis_s8[0];
+        m.cone[1] = bounds.cone_axis_s8[1];
+        m.cone[2] = bounds.cone_axis_s8[2];
+        m.cone[3] = bounds.cone_cutoff_s8;
 
-        draws.triangle_count = meshlet.triangle_count;
-        draws.vertex_count = meshlet.vertex_count;
+        m.triangle_count = meshlet.triangle_count;
+        m.vertex_count = meshlet.vertex_count;
+        m.index_offset = index_offset;
 
-        geometry->meshlets.push_back(draws);
+        geometry->meshlets.push_back(m);
+        
+        index_offset += meshlet.triangle_count*3;
     }
     // TODO: 32 packing required when mesh shader enabled
 
